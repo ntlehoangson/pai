@@ -542,6 +542,8 @@ Các giá trị cố định trong code là: API `0.0.0.0:8082`, heartbeat 60 gi
 
 API không yêu cầu token và trả password rõ theo yêu cầu triển khai. Vì API bind toàn bộ interface mạng, chỉ dùng trong LAN tin cậy và phải chặn port 8082 từ Internet bằng firewall.
 
+Khi serial adapter chưa cắm, đang bận hoặc đường dẫn `SERIAL_PORT` chưa đúng, service vẫn giữ API `8082` hoạt động. PAI chỉ log lỗi và retry kết nối serial; dùng Postman gọi `Update Serial Config` để thay port/baud/password mà không cần restart service.
+
 ### 11.2 API nhập cấu hình serial
 
 Endpoint nhận cả `PUT` và `POST`:

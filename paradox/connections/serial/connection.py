@@ -8,7 +8,6 @@ import serial_asyncio
 from paradox.connections.connection import Connection
 from paradox.connections.handler import ConnectionHandler
 from paradox.connections.serial.protocol import SerialConnectionProtocol
-from paradox.exceptions import SerialConnectionOpenFailed
 
 logger = logging.getLogger("PAI").getChild(__name__)
 
@@ -67,9 +66,10 @@ class SerialCommunication(Connection, ConnectionHandler):
             return await self.connected_future
         except SerialException as e:
             self.connected_future.cancel()
-            raise SerialConnectionOpenFailed(
-                "Connection to serial port failed"
-            ) from e  # PAICriticalException
+            # Keep the main retry loop and SafeLink API alive when an adapter
+            # is unplugged, busy, or has not been configured yet.  The caller
+            # receives False and retries; it does not terminate the service.
+            logger.error("Unable to open serial port %s: %s", self.port_path, e)
         except Exception:
             logger.exception("Unable to connect to Serial")
         finally:
