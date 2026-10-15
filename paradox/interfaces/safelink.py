@@ -43,7 +43,7 @@ MAX_API_BODY_BYTES = 64 * 1024
 # Fixed deployment contract for the custom Orange Pi build. Keeping these out
 # of paradox.config leaves operators with one SafeLink setting: the crawl URL.
 API_BIND_ADDRESS = "0.0.0.0"
-API_BIND_PORT = 8080
+API_BIND_PORT = 8082
 SERIAL_CONFIG_FILE = Path.home() / ".pai" / "safelink-serial.json"
 SERIAL_CONFIG_FILE_MODE = 0o666
 PUSH_INTERVAL_SECONDS = 60

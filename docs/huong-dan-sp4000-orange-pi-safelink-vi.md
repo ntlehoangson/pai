@@ -538,9 +538,9 @@ Toàn bộ phần SafeLink trong `/etc/pai/pai.conf` chỉ cần đúng một d�
 SAFELINK_CRAWL_URL = "https://safelinksystem.app/core/webhook/ultrasync/crawl"
 ```
 
-Các giá trị cố định trong code là: API `0.0.0.0:8080`, heartbeat 60 giây, connect/read timeout 5/10 giây, ba lần retry, queue 256 event, type `heatbeath` và `typeevent`.
+Các giá trị cố định trong code là: API `0.0.0.0:8082`, heartbeat 60 giây, connect/read timeout 5/10 giây, ba lần retry, queue 256 event, type `heatbeath` và `typeevent`.
 
-API không yêu cầu token và trả password rõ theo yêu cầu triển khai. Vì API bind toàn bộ interface mạng, chỉ dùng trong LAN tin cậy và phải chặn port 8080 từ Internet bằng firewall.
+API không yêu cầu token và trả password rõ theo yêu cầu triển khai. Vì API bind toàn bộ interface mạng, chỉ dùng trong LAN tin cậy và phải chặn port 8082 từ Internet bằng firewall.
 
 ### 11.2 API nhập cấu hình serial
 
@@ -554,7 +554,7 @@ Content-Type: application/json
 Ví dụ:
 
 ```bash
-curl -X PUT http://127.0.0.1:8080/api/v1/config/serial \
+curl -X PUT http://127.0.0.1:8082/api/v1/config/serial \
   -H 'Content-Type: application/json' \
   -d '{
     "CONNECTION_TYPE": "Serial",
@@ -587,10 +587,10 @@ Response là HTTP `202 Accepted` vì reconnect diễn ra bất đồng bộ.
 Ví dụ lấy toàn bộ tủ:
 
 ```bash
-curl http://127.0.0.1:8080/api/v1/panel
+curl http://127.0.0.1:8082/api/v1/panel
 ```
 
-Collection import trực tiếp vào Postman nằm tại `docs/postman/PAI-SafeLink.postman_collection.json`. Đổi collection variable `base_url` thành IP Orange Pi, ví dụ `http://192.168.1.50:8080`.
+Collection import trực tiếp vào Postman nằm tại `docs/postman/PAI-SafeLink.postman_collection.json`. Đổi collection variable `base_url` thành IP Orange Pi, ví dụ `http://192.168.1.50:8082`.
 
 Field `data` trong response `/api/v1/panel` gồm các container PAI hiện có như `zone`, `partition`, `system`, `pgm`, `module`... tùy model/cấu hình panel. Trước full status đầu tiên, `/api/v1/zones` trả `available=false`; heartbeat chưa được gửi để tránh tạo trạng thái zone rỗng giả.
 
@@ -653,27 +653,34 @@ Không đưa token mặc định hoặc credential thật vào tài liệu, repo
 
 ## 13. Cài PAI trên Orange Pi 3
 
-### 13.1 Cách gọn nhất: file `paradosp` + file config
+### 13.1 Cách gọn nhất: `paradosp` + một file setup
 
-Workflow `.github/workflows/build-paradosp-arm64.yml` chạy trên runner `ubuntu-22.04-arm`, dùng PEX để gom source và toàn bộ dependency Python vào **một file duy nhất tên `paradosp`**. Đây không phải Nuitka, không compile thành ELF và không mã hóa/che source. CI kiểm tra runner là ARM64, chạy test SafeLink và chạy `paradosp --self-test` trước khi upload artifact.
+Workflow `.github/workflows/build-paradosp-arm64.yml` chạy trên runner `ubuntu-22.04-arm`, dùng PEX `--scie eager` để tạo **native ELF ARM64 tên `paradosp` có nhúng sẵn CPython và toàn bộ dependency**. Đây không phải Nuitka và không mã hóa/che source. Orange Pi không cần có Python, pip, virtualenv, compiler hoặc Internet khi chạy.
 
-Orange Pi phải có `python3` (Python 3.8 trở lên; khuyến nghị 3.11). Không cần `pip install`, virtualenv, clone source, compiler hay package Python. Chỉ copy hai file:
+CI kiểm tra file là ELF ARM64 rồi chạy self-test trong môi trường đã xóa `PATH`, nhờ vậy build sẽ fail nếu chương trình còn phụ thuộc Python cài trên runner.
+
+Sau khi tải artifact, chỉ copy hai file vào cùng thư mục bất kỳ trên Orange Pi:
 
 ```text
-/opt/paradosp/paradosp
-/opt/paradosp/paradosp.conf
+paradosp
+setup-orange-pi.sh
 ```
 
-File config mẫu là `deploy/orange-pi/paradosp.conf` và chỉ có một đường dẫn SafeLink. Chạy trực tiếp:
+Cài đặt bằng đúng một lệnh:
 
 ```bash
-cd /opt/paradosp
-python3 ./paradosp -c ./paradosp.conf
+sudo sh setup-orange-pi.sh ./paradosp
 ```
 
-Cách gọi qua `python3` không phụ thuộc executable bit của file. Nếu muốn chạy `./paradosp`, cấp quyền một lần bằng `chmod +x paradosp`.
+Không cần tự `chmod`, cài Python hay sửa quyền serial. Script tự:
 
-Nếu không truyền `-c`/`--config`, chương trình tự tạo `~/.pai/paradosp.conf` với quyền `0666`. Sau khi chạy, cấu hình serial bằng API/Postman; serial được lưu tại `~/.pai/safelink-serial.json`.
+1. Kiểm tra OS là ARM64 (`aarch64`).
+2. Cài chương trình vào `/opt/paradosp/paradosp`.
+3. Tạo `/etc/paradosp/paradosp.conf` với duy nhất URL SafeLink và mode `0666`.
+4. Tạo `paradosp.service`, chạy bằng root và tự khởi động lại nếu lỗi.
+5. Chạy `--self-test`, enable service và khởi động ngay.
+
+Sau khi service chạy, cấu hình serial bằng API/Postman. Serial runtime được lưu tại `/var/lib/paradosp/.pai/safelink-serial.json` với mode `0666`.
 
 ### 13.2 Cách cài từ source để debug
 
@@ -707,7 +714,7 @@ Thêm user service vào `dialout`, sau đó đăng xuất/đăng nhập hoặc r
 sudo usermod -aG dialout pai
 ```
 
-Nếu tự tạo service sau này, lệnh chạy vẫn chỉ là `python3 /opt/paradosp/paradosp -c /opt/paradosp/paradosp.conf`. Runtime serial config nằm ở `~/.pai/safelink-serial.json` và có mode `0666` theo yêu cầu.
+Nếu cài bằng `setup-orange-pi.sh`, service chạy trực tiếp `/opt/paradosp/paradosp --config /etc/paradosp/paradosp.conf`, không gọi Python hệ thống.
 
 ## 14. Checklist kiểm thử hiện trường
 
@@ -752,7 +759,7 @@ Kiểm tra từng zone vật lý, không chỉ zone 1:
 - [ ] Mất Internet không block poll serial.
 - [ ] Sau phục hồi mạng heartbeat dùng trạng thái zone mới nhất, không xếp hàng các heartbeat cũ.
 - [ ] Backend nhận payload lớn hơn trường hợp 32 zone.
-- [ ] Port API 8080 chỉ mở trong LAN/firewall vì API không có token và trả password rõ.
+- [ ] Port API 8082 chỉ mở trong LAN/firewall vì API không có token và trả password rõ.
 - [ ] `GET /api/v1/health` không tăng `dropped_events` trong soak test.
 
 ### 14.5 Soak test

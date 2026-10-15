@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build one-file paradosp
+    name: Build standalone paradosp
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 30
 
@@ -45,30 +45,46 @@ jobs:
           set -euxo pipefail
           python -m pytest tests/interfaces/test_safelink.py tests/test_paradosp_app.py -q
 
-      - name: Build the single paradosp file
+      - name: Build standalone paradosp with embedded Python
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p dist
           pex . \
             --entry-point paradox.paradosp_app:main \
-            --python-shebang '/usr/bin/env python3' \
+            --scie eager \
             --output-file dist/paradosp
           chmod 0755 dist/paradosp
+          cp deploy/orange-pi/setup-orange-pi.sh dist/setup-orange-pi.sh
 
-      - name: Verify the packaged application
+      - name: Verify standalone ARM64 application
         shell: bash
         run: |
           set -euxo pipefail
           test -f dist/paradosp
-          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 1
-          test "$(head -n 1 dist/paradosp)" = '#!/usr/bin/env python3'
-          python3 dist/paradosp --self-test
+          test -f dist/setup-orange-pi.sh
+          sh -n dist/setup-orange-pi.sh
+          file dist/paradosp | tee dist/paradosp.file-info
+          grep -q 'ELF 64-bit' dist/paradosp.file-info
+          grep -Eq 'ARM aarch64|ARM64' dist/paradosp.file-info
+          mkdir -p "${RUNNER_TEMP}/paradosp-home"
+          env -i \
+            HOME="${RUNNER_TEMP}/paradosp-home" \
+            XDG_CACHE_HOME="${RUNNER_TEMP}/paradosp-home/.cache" \
+            ./dist/paradosp --self-test
 
       - name: Upload paradosp
         uses: actions/upload-artifact@v7
         with:
           path: dist/paradosp
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Orange Pi setup
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/setup-orange-pi.sh
           archive: false
           if-no-files-found: error
           retention-days: 30
