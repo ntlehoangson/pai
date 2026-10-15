@@ -55,7 +55,7 @@ Mức độ xác minh:
 | SP4000 được PAI map vào Spectra/Magellan | Đọc trực tiếp factory và product ID enum |
 | URL đúng của SafeLink | DNS hoạt động; `GET` trả `405`, phù hợp endpoint chỉ nhận `POST` |
 | Contract hiện tại của `/crawl` | Đọc controller/entity local của SafeLink |
-| Test unit local | 1.708 test pass; gồm 13 ca test SafeLink. Nhóm uptime dùng Unix signal không chạy trên Windows |
+| Test unit local | 1.712 test pass; gồm test SafeLink và entrypoint `paradosp`. Có 5 test uptime cũ không tương thích Windows do Unix signal; CI Linux không gặp giới hạn này |
 | Kết nối Orange Pi 3 ↔ SP4000 thật | Chưa kiểm tra phần cứng |
 | PC Password, firmware, số zone và sơ đồ dây thực tế tại hiện trường | Cần xác nhận trên tủ thật |
 | `POST` thật lên production | Không thực hiện để tránh tạo dữ liệu ngoài ý muốn |
@@ -653,6 +653,30 @@ Không đưa token mặc định hoặc credential thật vào tài liệu, repo
 
 ## 13. Cài PAI trên Orange Pi 3
 
+### 13.1 Cách gọn nhất: file `paradosp` + file config
+
+Workflow `.github/workflows/build-paradosp-arm64.yml` chạy trên runner `ubuntu-22.04-arm`, dùng PEX để gom source và toàn bộ dependency Python vào **một file duy nhất tên `paradosp`**. Đây không phải Nuitka, không compile thành ELF và không mã hóa/che source. CI kiểm tra runner là ARM64, chạy test SafeLink và chạy `paradosp --self-test` trước khi upload artifact.
+
+Orange Pi phải có `python3` (Python 3.8 trở lên; khuyến nghị 3.11). Không cần `pip install`, virtualenv, clone source, compiler hay package Python. Chỉ copy hai file:
+
+```text
+/opt/paradosp/paradosp
+/opt/paradosp/paradosp.conf
+```
+
+File config mẫu là `deploy/orange-pi/paradosp.conf` và chỉ có một đường dẫn SafeLink. Chạy trực tiếp:
+
+```bash
+cd /opt/paradosp
+python3 ./paradosp -c ./paradosp.conf
+```
+
+Cách gọi qua `python3` không phụ thuộc executable bit của file. Nếu muốn chạy `./paradosp`, cấp quyền một lần bằng `chmod +x paradosp`.
+
+Nếu không truyền `-c`/`--config`, chương trình tự tạo `~/.pai/paradosp.conf` với quyền `0666`. Sau khi chạy, cấu hình serial bằng API/Postman; serial được lưu tại `~/.pai/safelink-serial.json`.
+
+### 13.2 Cách cài từ source để debug
+
 Ví dụ Debian/Ubuntu/Armbian:
 
 ```bash
@@ -683,14 +707,7 @@ Thêm user service vào `dialout`, sau đó đăng xuất/đăng nhập hoặc r
 sudo usermod -aG dialout pai
 ```
 
-Service nên có:
-
-- `Restart=always`
-- `RestartSec=5`
-- `After=network-online.target`
-- runtime serial config `~/.pai/safelink-serial.json` mode `0666` theo yêu cầu
-- environment chứa token, không ghi token trong unit public
-- log rotation hoặc journald limit
+Nếu tự tạo service sau này, lệnh chạy vẫn chỉ là `python3 /opt/paradosp/paradosp -c /opt/paradosp/paradosp.conf`. Runtime serial config nằm ở `~/.pai/safelink-serial.json` và có mode `0666` theo yêu cầu.
 
 ## 14. Checklist kiểm thử hiện trường
 

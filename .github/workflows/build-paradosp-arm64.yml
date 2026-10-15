@@ -1,0 +1,74 @@
+name: Build paradosp ARM64
+
+on:
+  push:
+    branches:
+      - dev
+      - sonlh/dev
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build one-file paradosp
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Verify ARM64 runner
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "$(uname -m)" = "aarch64"
+          uname -a
+          python --version
+
+      - name: Install test and packaging tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install .
+          python -m pip install "pex==2.103.4" pytest pytest-asyncio
+
+      - name: Run gateway tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python -m pytest tests/interfaces/test_safelink.py tests/test_paradosp_app.py -q
+
+      - name: Build the single paradosp file
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+          pex . \
+            --entry-point paradox.paradosp_app:main \
+            --python-shebang '/usr/bin/env python3' \
+            --output-file dist/paradosp
+          chmod 0755 dist/paradosp
+
+      - name: Verify the packaged application
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -f dist/paradosp
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 1
+          test "$(head -n 1 dist/paradosp)" = '#!/usr/bin/env python3'
+          python3 dist/paradosp --self-test
+
+      - name: Upload paradosp
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/paradosp
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
