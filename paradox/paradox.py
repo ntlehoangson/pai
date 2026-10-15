@@ -919,6 +919,44 @@ class Paradox:
             await self.connection.close()
             logger.info("Disconnected from the Alarm Panel")
 
+        if self._loop_wait_event is not None:
+            self._loop_wait_event.set()
+
+    async def reconfigure_connection(self, updates: dict):
+        """Apply connection settings and force the main retry loop to reconnect.
+
+        This method must run on PAI's asyncio loop.  Disconnecting before
+        changing ``cfg`` makes sure the old transport is closed using its old
+        connection type.  The cached Connection and panel/storage state are
+        then discarded so the next ``full_connect`` uses the new serial port.
+        """
+        try:
+            if self._connection is not None:
+                await self.disconnect()
+            else:
+                self.run_state = RunState.STOP
+        except Exception:
+            # A dead/broken transport must not prevent replacing it with the
+            # newly configured serial connection.
+            logger.exception("Error while closing connection for reconfiguration")
+        finally:
+            for key, value in updates.items():
+                if key not in {
+                    "CONNECTION_TYPE",
+                    "SERIAL_PORT",
+                    "SERIAL_BAUD",
+                    "SERIAL_ENCRYPTED",
+                    "PASSWORD",
+                }:
+                    raise ValueError(f"Unsupported connection setting: {key}")
+                setattr(cfg, key, value)
+
+            self._connection = None
+            self.panel = None
+            self.storage = Storage()
+            if self._loop_wait_event is not None:
+                self._loop_wait_event.set()
+
     async def pause(self):
         logger.info("Pausing PAI")
         if self.run_state == RunState.RUN:

@@ -30,7 +30,7 @@ flowchart LR
     D --> R["RAM status blocks + live events"]
     M --> C["Bộ nhớ trạng thái PAI"]
     R --> C
-    C --> B["SafeLinkCrawlInterface: snapshot mới nhất"]
+    C --> B["SafeLinkInterface: REST API + snapshot mới nhất"]
     B -->|"Mỗi 60 giây, HTTPS POST"| W["SafeLink /core/webhook/ultrasync/crawl"]
 ```
 
@@ -55,7 +55,7 @@ Mức độ xác minh:
 | SP4000 được PAI map vào Spectra/Magellan | Đọc trực tiếp factory và product ID enum |
 | URL đúng của SafeLink | DNS hoạt động; `GET` trả `405`, phù hợp endpoint chỉ nhận `POST` |
 | Contract hiện tại của `/crawl` | Đọc controller/entity local của SafeLink |
-| Test unit local | Chưa chạy được vì môi trường thiếu dependency Python `construct` |
+| Test unit local | 1.708 test pass; gồm 13 ca test SafeLink. Nhóm uptime dùng Unix signal không chạy trên Windows |
 | Kết nối Orange Pi 3 ↔ SP4000 thật | Chưa kiểm tra phần cứng |
 | PC Password, firmware, số zone và sơ đồ dây thực tế tại hiện trường | Cần xác nhận trên tủ thật |
 | `POST` thật lên production | Không thực hiện để tránh tạo dữ liệu ngoài ý muốn |
@@ -440,172 +440,169 @@ Giả sử zone 1 tên `Front Door`, thuộc partition 1:
    - `was_in_alarm=True` có thể được giữ lại sau đó cho tới khi memory được clear.
 7. Khi cửa đóng lại, `open=False`; không được tự xóa `was_in_alarm` nếu panel vẫn giữ memory.
 
-## 10. Contract snapshot đề xuất cho SafeLink
+## 10. Contract webhook đã triển khai
 
-Endpoint `/crawl` hiện nhận một JSON bất kỳ, vì vậy cần chốt schema phía gửi để dữ liệu có thể dùng lâu dài.
+Code không normalize, không đổi tên field và không chèn thêm field vào bên trong `data`. Nó chỉ bọc dữ liệu gốc bằng đúng hai khóa ngoài cùng:
+
+```json
+{"type": "<loại bản tin>", "data": "<dữ liệu gốc của PAI>"}
+```
+
+### 10.1 Heartbeat toàn bộ zone
+
+Cứ 60 giây, sau khi PAI đã nhận được full status đầu tiên, interface gửi:
 
 ```json
 {
-  "schema_version": 1,
-  "kind": "zone_snapshot",
-  "snapshot_id": "pi-orange-001:2026-10-15T16:30:00Z",
-  "timestamp": "2026-10-15T16:30:00Z",
-  "pi_id": "pi-orange-001",
-  "full": true,
-  "fresh": true,
-  "panel": {
-    "vendor": "Paradox",
-    "model": "SP4000",
-    "serial_number": "01234567",
-    "firmware": "5.20 build 0",
-    "connection": "serial",
-    "serial_baud": 9600
-  },
-  "source_health": {
-    "pai_run_state": "RUN",
-    "last_panel_status_at": "2026-10-15T16:29:54Z",
-    "status_age_seconds": 6,
-    "zone_count": 12
-  },
-  "zones": [
-    {
+  "type": "heatbeath",
+  "data": {
+    "1": {
       "id": 1,
       "key": "Front_Door",
-      "name": "Front Door",
-      "partition": 1,
+      "label": "Front Door",
       "definition": "delay_1",
-      "status": "normal",
+      "partition": 1,
       "open": false,
       "alarm": false,
-      "was_in_alarm": false,
       "tamper": false,
-      "fire": false,
-      "bypassed": false,
-      "shutdown": false,
-      "entry_delay": false,
-      "exit_delay": false,
-      "rf_supervision_trouble": false,
-      "rf_low_battery_trouble": false,
-      "signal_strength": 0
+      "bypassed": false
     }
-  ],
-  "summary": {
-    "normal": 12,
-    "open": 0,
-    "alarm": 0,
-    "tamper": 0,
-    "fire": 0,
-    "bypassed": 0,
-    "stale": 0
   }
 }
 ```
 
-### 10.1 Quy tắc sinh `status`
+`data` chính là map `storage.data["zone"]` hiện tại của PAI. Interface không chuyển map thành array, không tự tạo `status`, không lọc zone disabled và không làm mất các boolean gốc. Khi encode JSON, key số của dictionary như `1` hiển nhiên trở thành chuỗi `"1"` theo chuẩn JSON; object zone bên trong không bị đổi form.
 
-Không bỏ các boolean gốc. `status` chỉ là field tổng hợp để UI/filter nhanh, theo độ ưu tiên:
+Literal `heatbeath` được giữ đúng theo contract đã yêu cầu, dù khác chính tả tiếng Anh thông thường. Giá trị này là hằng số nội bộ trong `safelink.py`, không cần cấu hình vận hành.
 
-```text
-stale/unknown
-  > fire
-  > alarm
-  > tamper
-  > rf_supervision_trouble hoặc rf_low_battery_trouble
-  > bypassed
-  > open
-  > normal
-```
+### 10.2 Live event
 
-Một zone có thể đồng thời `open=true` và `bypassed=true`; JSON vẫn phải giữ cả hai cờ.
-
-### 10.2 “Toàn bộ zone” nghĩa là gì
-
-Mặc định nên gửi toàn bộ zone đang `enabled` trong EEPROM. Nếu SafeLink cần đủ slot 1..32, mỗi slot disabled phải có:
+Ngay khi topic nội bộ `events` phát một event, interface đưa bản tin vào queue HTTP:
 
 ```json
-{"id": 13, "enabled": false, "status": "disabled"}
+{
+  "type": "typeevent",
+  "data": {
+    "timestamp": "2026-10-16T08:30:00",
+    "level": "INFO",
+    "type": "zone",
+    "id": 1,
+    "label": "Front Door",
+    "change": {"open": true},
+    "tags": ["live", "zone"]
+  }
+}
 ```
 
-Không được gửi zone disabled thành `open=false`/`normal`, vì đó là trạng thái giả.
+`data` là nguyên `event.props`. Ví dụ trên chỉ minh họa; field thực tế phụ thuộc event mà parser SP/MG tạo ra.
 
-## 11. Interface push 60 giây — thiết kế khuyến nghị
+## 11. SafeLink interface và REST API đã triển khai
 
-Nên thêm một interface đúng kiến trúc PAI, ví dụ:
+Code nằm tại `paradox/interfaces/safelink.py`. `InterfaceManager` tự khởi tạo interface khi `SAFELINK_CRAWL_URL` có giá trị; không cần cờ enable riêng.
 
-```text
-paradox/interfaces/safelink_crawl.py
-    SafeLinkCrawlInterface(AsyncInterface)
-```
-
-Interface đăng ký các topic nội bộ:
-
-- `panel_detected`
-- `definitions_loaded`
-- `labels_loaded`
-- `status_update`
-- `run-state`
-
-Luồng xử lý:
+Luồng runtime:
 
 ```mermaid
 sequenceDiagram
     participant Panel as SP4000
     participant PAI as PAI poll loop
-    participant Cache as Snapshot cache
+    participant Cache as Zone snapshot cache
     participant Push as SafeLink worker
     participant API as /core/webhook/ultrasync/crawl
 
     loop Mỗi khoảng 10 giây
         PAI->>Panel: Đọc RAM blocks 0,1,2,3,4,5
         Panel-->>PAI: Status replies
-        PAI->>Cache: Ghi đè snapshot mới nhất + last_status_at
+        PAI->>Cache: Deep-copy storage zone mới nhất
     end
 
     loop Mỗi 60 giây
-        Push->>Cache: Deep-copy snapshot nhất quán
-        Push->>Push: Kiểm tra freshness và build JSON
+        Push->>Cache: Lấy map zone nhất quán
+        Push->>Push: Bọc type=heatbeath, giữ nguyên data
         Push->>API: HTTPS POST với timeout hữu hạn
         API-->>Push: HTTP 2xx hoặc lỗi
     end
+
+    Panel-->>PAI: Live event
+    PAI->>Push: Queue type=typeevent, data=event.props
+    Push->>API: HTTPS POST live event
 ```
 
-Nguyên tắc production:
+HTTP outbound chạy trong thread `SafeLinkPush`, không chạy trên asyncio/serial loop. Vì vậy timeout hoặc mất Internet không chặn việc đọc frame SP4000. Queue live event mặc định chứa tối đa 256 phần tử; số event bị bỏ do queue đầy được công khai trong health API.
 
-1. Callback `status_update` chỉ copy dữ liệu, không gọi HTTP.
-2. HTTP chạy ở worker riêng hoặc `asyncio.to_thread`; tuyệt đối không block serial/event loop.
-3. Dùng connect timeout khoảng 5 giây, read timeout khoảng 10 giây.
-4. Retry có exponential backoff và jitter, ví dụ 1 s, 2 s, 4 s; không retry vô hạn trong cùng chu kỳ.
-5. Queue kiểu “latest only”: khi mạng lỗi, giữ snapshot mới nhất thay vì chất vô hạn 60 snapshot cũ.
-6. `snapshot_id` phải ổn định cho một snapshot để backend có thể bổ sung idempotency sau này.
-7. Chỉ gửi lần đầu sau khi đã có `panel_detected`, labels/definitions và status đầu tiên.
-8. Nếu không có status mới quá 30 giây, đặt `fresh=false`, `status=stale`; không biến trạng thái cuối cùng thành `normal`.
-9. Secret lấy từ environment/systemd credential, không hard-code và không log.
-10. Log token phải được redact.
+### 11.1 Bật interface
 
-Config đề xuất:
+Toàn bộ phần SafeLink trong `/etc/pai/pai.conf` chỉ cần đúng một dòng:
 
 ```python
-SAFELINK_CRAWL_ENABLE = True
 SAFELINK_CRAWL_URL = "https://safelinksystem.app/core/webhook/ultrasync/crawl"
-SAFELINK_PI_ID = "pi-orange-001"
-SAFELINK_PUSH_INTERVAL = 60
-SAFELINK_STALE_AFTER = 30
-SAFELINK_CONNECT_TIMEOUT = 5
-SAFELINK_READ_TIMEOUT = 10
-SAFELINK_X_TOKEN = None  # lấy từ biến môi trường, không commit secret
 ```
 
-Repo đã có dependency `requests`, do đó không cần thêm HTTP library mới. Tuy nhiên lời gọi `requests.post()` phải chạy ngoài asyncio loop.
+Các giá trị cố định trong code là: API `0.0.0.0:8080`, heartbeat 60 giây, connect/read timeout 5/10 giây, ba lần retry, queue 256 event, type `heatbeath` và `typeevent`.
 
-### 11.1 Phương án thay thế: MQTT sidecar
+API không yêu cầu token và trả password rõ theo yêu cầu triển khai. Vì API bind toàn bộ interface mạng, chỉ dùng trong LAN tin cậy và phải chặn port 8080 từ Internet bằng firewall.
 
-Nếu hệ thống đã có Mosquitto và muốn cô lập process HTTP khỏi PAI hoàn toàn:
+### 11.2 API nhập cấu hình serial
 
-- PAI publish retained state lên `paradox/states/zones/<zone_key>/<property>`.
-- Bật `MQTT_PUBLISH_DEFINITIONS=True` để lấy `id`, definition và partition từ `paradox/definitions/zones/...`.
-- Một service riêng subscribe retained topics, dựng cache và push mỗi 60 giây.
+Endpoint nhận cả `PUT` và `POST`:
 
-Ưu điểm là lỗi bridge không ảnh hưởng PAI. Nhược điểm là thêm broker/process và việc lấy label gốc/atomic snapshot phức tạp hơn. Nếu chưa có MQTT, interface trực tiếp là lựa chọn gọn hơn.
+```text
+PUT /api/v1/config/serial
+Content-Type: application/json
+```
+
+Ví dụ:
+
+```bash
+curl -X PUT http://127.0.0.1:8080/api/v1/config/serial \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "CONNECTION_TYPE": "Serial",
+    "SERIAL_PORT": "/dev/serial/by-id/usb-REPLACE_WITH_REAL_ADAPTER_ID",
+    "SERIAL_BAUD": 9600,
+    "SERIAL_ENCRYPTED": false,
+    "PASSWORD": "0000"
+  }'
+```
+
+API kiểm tra đủ và đúng type của cả năm field, từ chối field lạ, yêu cầu `PASSWORD` đúng 4 ký tự hex. Khi hợp lệ:
+
+1. Ghi atomically vào `~/.pai/safelink-serial.json`, trong đó `~` là home của user chạy PAI.
+2. Đặt mode file `0666` và trả `PASSWORD` nguyên văn trong response theo yêu cầu.
+3. Ngắt transport cũ trên asyncio loop.
+4. Xóa object connection/panel/storage cũ.
+5. Main loop PAI tự reconnect bằng port/baud/password mới và đọc lại toàn bộ EEPROM/RAM.
+
+Response là HTTP `202 Accepted` vì reconnect diễn ra bất đồng bộ.
+
+### 11.3 API đọc thông tin tủ
+
+| Method | Endpoint | Kết quả |
+|---|---|---|
+| `GET` | `/api/v1/panel` | Panel detect, run state, thời điểm status cuối, cấu hình kết nối gồm password rõ và toàn bộ `storage.data` |
+| `GET` | `/api/v1/zones` | Nguyên map toàn bộ zone hiện tại; đây cũng là `data` của heartbeat |
+| `GET` | `/api/v1/config/serial` | Cấu hình serial hiện tại, gồm password rõ |
+| `GET` | `/api/v1/health` | Panel/zone availability, lần push cuối, lỗi push cuối, queue và dropped event |
+
+Ví dụ lấy toàn bộ tủ:
+
+```bash
+curl http://127.0.0.1:8080/api/v1/panel
+```
+
+Collection import trực tiếp vào Postman nằm tại `docs/postman/PAI-SafeLink.postman_collection.json`. Đổi collection variable `base_url` thành IP Orange Pi, ví dụ `http://192.168.1.50:8080`.
+
+Field `data` trong response `/api/v1/panel` gồm các container PAI hiện có như `zone`, `partition`, `system`, `pgm`, `module`... tùy model/cấu hình panel. Trước full status đầu tiên, `/api/v1/zones` trả `available=false`; heartbeat chưa được gửi để tránh tạo trạng thái zone rỗng giả.
+
+### 11.4 Retry và tính không chặn
+
+Mỗi HTTP POST dùng connect/read timeout riêng, mặc định 5/10 giây. Khi lỗi, worker retry tối đa ba lần với backoff 1, 2, 4 giây. Callback serial chỉ deep-copy/queue dữ liệu, tuyệt đối không gọi HTTP.
+
+Giới hạn hiện tại cần hiểu rõ:
+
+1. Live event nằm trong RAM queue, chưa có durable disk spool. Nếu Orange Pi mất điện hoặc process chết trước khi gửi thì event chưa gửi có thể mất; heartbeat sau đó vẫn đối soát trạng thái hiện tại.
+2. Queue đầy sẽ không block serial loop mà bỏ event mới, tăng `dropped_events` và log lỗi.
+3. Backend `/crawl` vẫn cần tự xử lý idempotency/retention và xác thực token.
 
 ## 12. Trạng thái thật của endpoint SafeLink hiện tại
 
@@ -646,11 +643,11 @@ Các giới hạn phải xử lý trước production:
 
 - Áp dụng `x-token` hoặc chữ ký HMAC cho `/crawl`.
 - Cột payload là `JSONB`/`TEXT` đủ lớn.
-- Có index theo `pi_id`, `timestamp` hoặc cột được parse riêng.
-- Có retention hoặc bảng “latest snapshot” upsert theo `pi_id`.
+- Có index theo panel serial, `type`, thời điểm nhận hoặc cột được parse riêng.
+- Có retention hoặc bảng “latest snapshot” upsert theo panel/device đã xác thực.
 - Nếu SafeLink UI cần trạng thái zone: thêm parser/upsert, không chỉ archive raw JSON.
-- Trả response JSON rõ ràng gồm `accepted`, `snapshot_id`, `server_time`.
-- Bổ sung idempotency theo `snapshot_id`.
+- Trả response JSON rõ ràng gồm `accepted` và `server_time`.
+- Nếu cần idempotency, backend phải sinh khóa/hash mà không yêu cầu đổi form `data` hiện tại.
 
 Không đưa token mặc định hoặc credential thật vào tài liệu, repo hay log.
 
@@ -691,7 +688,7 @@ Service nên có:
 - `Restart=always`
 - `RestartSec=5`
 - `After=network-online.target`
-- file config mode `0600`
+- runtime serial config `~/.pai/safelink-serial.json` mode `0666` theo yêu cầu
 - environment chứa token, không ghi token trong unit public
 - log rotation hoặc journald limit
 
@@ -730,15 +727,16 @@ Kiểm tra từng zone vật lý, không chỉ zone 1:
 ### 14.4 Snapshot 60 giây
 
 - [ ] Snapshot đầu tiên chỉ gửi sau full status đầu tiên.
-- [ ] Mỗi payload chứa đủ toàn bộ zone enabled.
-- [ ] `timestamp` là UTC ISO-8601.
-- [ ] `status_age_seconds` nhỏ hơn ngưỡng stale khi panel khỏe.
+- [ ] Outer payload chỉ có `type` và `data`; `type` đúng literal `heatbeath`.
+- [ ] `data` đúng bằng map trả bởi `GET /api/v1/zones`, không normalize/đổi tên field.
+- [ ] Mỗi payload chứa toàn bộ zone PAI đang giữ, kể cả definition/label/status hiện có.
+- [ ] Live event dùng `type=typeevent` và `data=event.props` nguyên dạng.
 - [ ] Mất serial không tạo hàng loạt zone `normal` giả.
 - [ ] Mất Internet không block poll serial.
-- [ ] Sau phục hồi mạng chỉ gửi latest snapshot, không flood backlog vô hạn.
+- [ ] Sau phục hồi mạng heartbeat dùng trạng thái zone mới nhất, không xếp hàng các heartbeat cũ.
 - [ ] Backend nhận payload lớn hơn trường hợp 32 zone.
-- [ ] Token sai bị `401/403` sau khi backend bổ sung auth.
-- [ ] Duplicate `snapshot_id` không tạo dữ liệu trùng sau khi backend bổ sung idempotency.
+- [ ] Port API 8080 chỉ mở trong LAN/firewall vì API không có token và trả password rõ.
+- [ ] `GET /api/v1/health` không tăng `dropped_events` trong soak test.
 
 ### 14.5 Soak test
 

@@ -268,6 +268,9 @@ import logging
 # IP_INTERFACE_BIND_PORT = 10000
 # IP_INTERFACE_PASSWORD = 'paradox'
 #
+### SafeLink serial configuration API and webhook push
+# SAFELINK_CRAWL_URL = 'https://safelinksystem.app/core/webhook/ultrasync/crawl'
+#
 ### Dummy Interface for testing
 # DUMMY_INTERFACE_ENABLE = False
 # DUMMY_EVENT_FILTERS = []

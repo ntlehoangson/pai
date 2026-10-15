@@ -85,6 +85,16 @@ class InterfaceManager:
             except Exception:
                 logger.exception("Unable to start IP Interface")
 
+        # Load the SafeLink REST/configuration and webhook interface when a
+        # destination URL is present. This custom build ships with the URL set.
+        if self.conf.SAFELINK_CRAWL_URL:
+            try:
+                from paradox.interfaces.safelink import SafeLinkInterface
+
+                self.register(SafeLinkInterface(self.alarm, self.conf))
+            except Exception:
+                logger.exception("Unable to start SafeLink Interface")
+
         # Load Dummy Interface
         if self.conf.DUMMY_INTERFACE_ENABLE:
             try:

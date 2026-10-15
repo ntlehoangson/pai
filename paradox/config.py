@@ -311,6 +311,9 @@ class Config:
         "IP_INTERFACE_BIND_ADDRESS": "0.0.0.0",
         "IP_INTERFACE_BIND_PORT": (10000, int, (1, 65535)),
         "IP_INTERFACE_PASSWORD": ("paradox", [str, bytes, type(None)]),
+        # SafeLink webhook integration. Runtime/API details are fixed in the
+        # custom interface so this is the only SafeLink setting operators need.
+        "SAFELINK_CRAWL_URL": "https://safelinksystem.app/core/webhook/ultrasync/crawl",
         # Dummy Interface for testing
         "DUMMY_INTERFACE_ENABLE": False,
         "DUMMY_EVENT_FILTERS": [

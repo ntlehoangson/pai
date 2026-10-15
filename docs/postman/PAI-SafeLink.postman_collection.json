@@ -1,0 +1,112 @@
+{
+  "info": {
+    "_postman_id": "7404bd85-ad7f-4d61-9e6d-59b8b7a171a1",
+    "name": "PAI SafeLink - Paradox SP4000",
+    "description": "API cục bộ trên Orange Pi để cấu hình serial và đọc toàn bộ trạng thái tủ Paradox. API không dùng token và trả PASSWORD nguyên văn theo contract triển khai.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/v1/health",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "health"]
+        },
+        "description": "Kiểm tra run_state, panel/zone availability, lần push gần nhất và queue live event."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Get Serial Config",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/v1/config/serial",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "config", "serial"]
+        },
+        "description": "Đọc cấu hình serial hiện tại. PASSWORD được trả nguyên văn."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Update Serial Config",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"CONNECTION_TYPE\": \"Serial\",\n  \"SERIAL_PORT\": \"{{serial_port}}\",\n  \"SERIAL_BAUD\": 9600,\n  \"SERIAL_ENCRYPTED\": false,\n  \"PASSWORD\": \"{{pc_password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/config/serial",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "config", "serial"]
+        },
+        "description": "Lưu cấu hình vào ~/.pai/safelink-serial.json, áp dụng và yêu cầu PAI reconnect. Response 202 là đúng vì reconnect chạy bất đồng bộ. PASSWORD là PC Communication Password của BabyWare."
+      },
+      "response": []
+    },
+    {
+      "name": "4. Get All Zones",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/v1/zones",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "zones"]
+        },
+        "description": "Trả nguyên map zone hiện tại. Dữ liệu này cũng là data của heartbeat 60 giây."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Get Full Panel",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/v1/panel",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "panel"]
+        },
+        "description": "Trả panel identity, run_state, connection và toàn bộ PAI storage.data."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8080",
+      "type": "string"
+    },
+    {
+      "key": "serial_port",
+      "value": "/dev/serial/by-id/usb-REPLACE_WITH_REAL_ADAPTER_ID",
+      "type": "string"
+    },
+    {
+      "key": "pc_password",
+      "value": "0000",
+      "type": "string"
+    }
+  ]
+}
