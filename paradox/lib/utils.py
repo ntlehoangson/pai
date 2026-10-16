@@ -2,6 +2,7 @@ import asyncio
 import binascii
 from collections.abc import Hashable
 from copy import deepcopy
+import datetime
 import functools
 import json
 import re
@@ -37,6 +38,8 @@ class JSONByteEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, bytes):
             return o.decode("utf-8")
+        if isinstance(o, (datetime.datetime, datetime.date, datetime.time)):
+            return o.isoformat()
 
         return super().default(o)
 
