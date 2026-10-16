@@ -31,7 +31,10 @@ class Config:
             ["IP", "Serial", "PRT3"],
         ),  # Serial, IP, or PRT3
         # Serial Connection Details
-        "SERIAL_PORT": "/dev/ttyS1",  # Pathname of the Serial Port
+        # Orange Pi Zero 3: UART5 exposed on the 26-pin header.  This is only
+        # the board-UART default; a USB-TTL adapter should use its stable
+        # /dev/serial/by-id/... path instead.
+        "SERIAL_PORT": "/dev/ttyS5",  # Pathname of the Serial Port
         "SERIAL_BAUD": 9600,  # Baud rate of the Serial Port. Use 38400(default setting) or 57600 for EVO
         "SERIAL_ENCRYPTED": False,  # Set True for EVO panels with full serial encryption (firmware >= 7.50)
         # PRT3 Connection Details (Paradox PRT3 Printer Module — ASCII serial protocol)

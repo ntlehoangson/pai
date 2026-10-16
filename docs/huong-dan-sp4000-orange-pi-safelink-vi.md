@@ -1,10 +1,10 @@
-# Hướng dẫn tích hợp Paradox SP4000 → Orange Pi 3 → PAI → SafeLink
+# Hướng dẫn tích hợp Paradox SP4000 → Orange Pi Zero 3 → PAI → SafeLink
 
 ## 1. Mục tiêu và kết luận triển khai
 
 Mục tiêu của hệ thống:
 
-1. Orange Pi 3 kết nối trực tiếp với cổng serial của tủ Paradox SP4000.
+1. Orange Pi Zero 3 kết nối với cổng serial của tủ Paradox SP4000 qua USB-TTL, hoặc qua UART5 GPIO có mạch chuyển mức an toàn.
 2. PAI nhận byte từ tủ, tách frame, kiểm tra checksum, nhận diện đúng SP4000 và đăng nhập bằng PC Password.
 3. PAI đọc cấu hình zone và tên zone từ EEPROM của tủ.
 4. PAI đọc trạng thái hiện tại của toàn bộ zone đang được cấu hình, đồng thời nhận live event để cập nhật nhanh.
@@ -22,7 +22,7 @@ Kiến trúc khuyến nghị:
 flowchart LR
     Z["Cảm biến / zone"] --> P["Paradox SP4000"]
     P -->|"Serial TTL 5 V, 9600 bps"| L["Bộ chuyển mức hoặc USB-TTL phù hợp 5 V"]
-    L -->|"USB /dev/serial/by-id/..."| O["Orange Pi 3"]
+    L -->|"USB /dev/serial/by-id/... hoặc UART5 /dev/ttyS5"| O["Orange Pi Zero 3"]
     O --> S["PAI SerialConnectionProtocol"]
     S --> F["SerialFramer: frame 37 byte + checksum"]
     F --> D["Parser Spectra/Magellan"]
@@ -56,7 +56,7 @@ Mức độ xác minh:
 | URL đúng của SafeLink | DNS hoạt động; `GET` trả `405`, phù hợp endpoint chỉ nhận `POST` |
 | Contract hiện tại của `/crawl` | Đọc controller/entity local của SafeLink |
 | Test unit local | 1.712 test pass; gồm test SafeLink và entrypoint `paradosp`. Có 5 test uptime cũ không tương thích Windows do Unix signal; CI Linux không gặp giới hạn này |
-| Kết nối Orange Pi 3 ↔ SP4000 thật | Chưa kiểm tra phần cứng |
+| Kết nối Orange Pi Zero 3 ↔ SP4000 thật | Chưa kiểm tra phần cứng |
 | PC Password, firmware, số zone và sơ đồ dây thực tế tại hiện trường | Cần xác nhận trên tủ thật |
 | `POST` thật lên production | Không thực hiện để tránh tạo dữ liệu ngoài ý muốn |
 
@@ -130,7 +130,7 @@ SP4000 RX  <─────────  TX của USB-TTL / level shifter
 SP4000 GND ──────────  GND tín hiệu của adapter
 SP4000 AUX+            KHÔNG NỐI vào Orange Pi
 
-Orange Pi 3 được cấp nguồn riêng, ổn định.
+Orange Pi Zero 3 được cấp nguồn riêng, ổn định.
 ```
 
 Nếu không handshake được, kiểm tra lại hướng TX/RX theo đúng nhãn trên bo thực tế. Chỉ đổi chéo TX/RX sau khi đã chắc chắn mức điện áp an toàn.
@@ -141,6 +141,35 @@ Nếu không handshake được, kiểm tra lại hướng TX/RX theo đúng nh�
 - Dùng tên thiết bị ổn định `/dev/serial/by-id/...`, không phụ thuộc hoàn toàn vào `/dev/ttyUSB0` vì số thứ tự có thể đổi sau reboot.
 - User chạy PAI cần quyền đọc/ghi thiết bị, thường qua group `dialout`.
 - Dùng nguồn riêng tốt cho Orange Pi, watchdog và UPS nếu đây là hệ thống giám sát 24/7.
+
+### 4.5 Chọn đúng `SERIAL_PORT` trên Orange Pi Zero 3
+
+Có **hai trường hợp khác nhau**, không được thay lẫn nhau:
+
+| Cách nối với SP4000 | `SERIAL_PORT` cần dùng | Ghi chú |
+|---|---|---|
+| USB-TTL / Paradox 307USB cắm USB | `/dev/serial/by-id/usb-...` | Khuyến nghị. Tên ổn định sau reboot; xem đúng tên bằng `ls -l /dev/serial/by-id/`. |
+| Dây vào UART trên header 26 pin của Orange Pi Zero 3 | `/dev/ttyS5` | Đây là UART5. Phải enable UART5 trong OS trước, và không dùng UART0/debug console. |
+
+Vì vậy, `/dev/ttyS1` **không phải** lựa chọn mặc định cho Orange Pi Zero 3. Nếu dùng GPIO UART, đặt API như sau sau khi đã enable UART5:
+
+```json
+{
+  "CONNECTION_TYPE": "Serial",
+  "SERIAL_PORT": "/dev/ttyS5",
+  "SERIAL_BAUD": 9600,
+  "SERIAL_ENCRYPTED": false,
+  "PASSWORD": "0000"
+}
+```
+
+Kiểm tra node trước khi gọi API:
+
+```bash
+ls -l /dev/ttyS5
+```
+
+Nếu không tồn tại, enable `uart5` bằng công cụ cấu hình của image đang dùng (Orange Pi OS/Armbian), reboot, rồi kiểm tra lại. Không đoán thành `/dev/ttyS0` vì đó thường là cổng debug/console.
 
 ## 5. Cấu hình PAI cho SP4000
 
@@ -653,7 +682,7 @@ Các giới hạn phải xử lý trước production:
 
 Không đưa token mặc định hoặc credential thật vào tài liệu, repo hay log.
 
-## 13. Cài PAI trên Orange Pi 3
+## 13. Cài PAI trên Orange Pi Zero 3
 
 ### 13.1 Cách gọn nhất: `paradosp` + một file setup
 
@@ -794,7 +823,7 @@ Luồng đúng cho bài toán này là:
 ```text
 SP4000
 → TTL 5 V an toàn
-→ USB serial ổn định trên Orange Pi 3
+→ USB serial ổn định trên Orange Pi Zero 3
 → PAI handshake + PC Password
 → đọc EEPROM để biết zone nào tồn tại và tên/definition của zone
 → poll RAM 10 giây để có full state

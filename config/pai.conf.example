@@ -25,7 +25,7 @@ import logging
 # CONNECTION_TYPE = 'Serial'  		# Serial or IP or PRT3
 #
 ### Serial Connection Details
-# SERIAL_PORT = '/dev/ttyS1' 		# Pathname of the Serial Port
+#  = '/dev/ttyS1' 		# Pathname of the Serial Port
 # SERIAL_BAUD = 9600              # 9600 for SP/MG. For EVO: Use 38400(default setting) or 57600. 115200 for + versions
 #
 ### PRT3 ASCII Printer Module Connection
