@@ -479,7 +479,8 @@ Code không normalize, không đổi tên field và không chèn thêm field và
 
 ### 10.1 Heartbeat toàn bộ zone
 
-Cứ 60 giây, sau khi PAI đã nhận được full status đầu tiên, interface gửi:
+Ngay khi PAI nhận full status đầu tiên, interface gửi một heartbeat; sau đó cứ
+60 giây gửi lại:
 
 ```json
 {
@@ -523,7 +524,11 @@ Ngay khi topic nội bộ `events` phát một event, interface đưa bản tin 
 }
 ```
 
-`data` là nguyên `event.props`. Ví dụ trên chỉ minh họa; field thực tế phụ thuộc event mà parser SP/MG tạo ra.
+`data` là nguyên `event.props`. Ví dụ trên chỉ minh họa; field thực tế phụ thuộc
+event mà parser SP/MG tạo ra. Riêng các mẫu điện áp định kỳ mức `DEBUG` có
+`property` là `battery`, `dc` hoặc `vdc` và tag `voltage` bị lọc trước queue để
+không tạo dữ liệu rác. Các event nguồn/battery dạng trouble mức `CRITICAL` vẫn
+được gửi bình thường.
 
 ## 11. SafeLink interface và REST API đã triển khai
 
@@ -613,7 +618,7 @@ Response là HTTP `202 Accepted` vì reconnect diễn ra bất đồng bộ.
 | `GET` | `/api/v1/panel` | Panel detect, run state, thời điểm status cuối, cấu hình kết nối gồm password rõ và toàn bộ `storage.data` |
 | `GET` | `/api/v1/zones` | Nguyên map toàn bộ zone hiện tại; đây cũng là `data` của heartbeat |
 | `GET` | `/api/v1/config/serial` | Cấu hình serial hiện tại, gồm password rõ |
-| `GET` | `/api/v1/health` | Panel/zone availability, lần push cuối, lỗi push cuối, queue và dropped event |
+| `GET` | `/api/v1/health` | Panel/zone availability, lần heartbeat/event cuối, counter heartbeat/event, lỗi push, queue, filtered và dropped event |
 
 Ví dụ lấy toàn bộ tủ:
 
@@ -707,11 +712,18 @@ Không cần tự `chmod`, cài Python hay sửa quyền serial. Script tự:
 
 1. Kiểm tra OS là ARM64 (`aarch64`).
 2. Cài chương trình vào `/opt/paradosp/paradosp`.
-3. Tạo `/etc/paradosp/paradosp.conf` với duy nhất URL SafeLink và mode `0666`.
-4. Tạo `paradosp.service`, chạy bằng root và tự khởi động lại nếu lỗi.
-5. Chạy `--self-test`, enable service và khởi động ngay.
+3. Tạo `/etc/paradosp/paradosp.conf` mode `0600`, cấu hình sẵn `/dev/ttyS1`,
+   9600 baud, không mã hóa, password mặc định `0000` và URL SafeLink.
+4. Tạo log `/var/log/paradosp/paradosp.log`, xoay theo ngày, nén gzip và giữ
+   30 bản cũ.
+5. Tạo `paradosp.service`, chạy bằng root và tự khởi động lại nếu lỗi.
+6. Chạy `--self-test`, enable service và khởi động ngay.
 
-Sau khi service chạy, cấu hình serial bằng API/Postman. Serial runtime được lưu tại `/var/lib/paradosp/.pai/safelink-serial.json` với mode `0666`.
+Nếu PC Communication Password của tủ là `0000`, không cần API/Postman. Nếu
+khác, sửa `PASSWORD` trong `/etc/paradosp/paradosp.conf` rồi restart service.
+Cấu hình đã từng lưu bằng API tại
+`/var/lib/paradosp/.pai/safelink-serial.json` vẫn được ưu tiên để không phá máy
+đang vận hành.
 
 ### 13.2 Cách cài từ source để debug
 
@@ -782,16 +794,20 @@ Kiểm tra từng zone vật lý, không chỉ zone 1:
 ### 14.4 Snapshot 60 giây
 
 - [ ] Snapshot đầu tiên chỉ gửi sau full status đầu tiên.
+- [ ] Snapshot đầu tiên được gửi ngay, các snapshot sau cách nhau 60 giây.
 - [ ] Outer payload chỉ có `type` và `data`; `type` đúng literal `heatbeath`.
 - [ ] `data` đúng bằng map trả bởi `GET /api/v1/zones`, không normalize/đổi tên field.
 - [ ] Mỗi payload chứa toàn bộ zone PAI đang giữ, kể cả definition/label/status hiện có.
 - [ ] Live event dùng `type=typeevent` và `data=event.props` nguyên dạng.
+- [ ] Telemetry `battery`/`dc`/`vdc` mức DEBUG không tạo `typeevent`; trouble
+      nguồn mức CRITICAL vẫn tạo event.
 - [ ] Mất serial không tạo hàng loạt zone `normal` giả.
 - [ ] Mất Internet không block poll serial.
 - [ ] Sau phục hồi mạng heartbeat dùng trạng thái zone mới nhất, không xếp hàng các heartbeat cũ.
 - [ ] Backend nhận payload lớn hơn trường hợp 32 zone.
 - [ ] Port API 8082 chỉ mở trong LAN/firewall vì API không có token và trả password rõ.
 - [ ] `GET /api/v1/health` không tăng `dropped_events` trong soak test.
+- [ ] `heartbeat_push_count` tăng và `last_heartbeat_at` được cập nhật.
 
 ### 14.5 Soak test
 

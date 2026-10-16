@@ -84,6 +84,10 @@ Script thực hiện các việc sau:
 - Cài binary tại `/opt/paradosp/paradosp`.
 - Tạo cấu hình tại `/etc/paradosp/paradosp.conf` nếu file chưa tồn tại.
 - Tạo thư mục state `/var/lib/paradosp`.
+- Tạo thư mục log `/var/log/paradosp`.
+- Cấu hình sẵn Serial `/dev/ttyS1`, 9600 baud, không mã hóa và PC Password
+  mặc định `0000`.
+- Cấu hình log xoay theo ngày, nén gzip và giữ 30 file cũ.
 - Tạo và enable `paradosp.service`.
 - Chạy self-test rồi khởi động service.
 
@@ -93,9 +97,9 @@ Kiểm tra service:
 sudo systemctl status paradosp --no-pager
 ```
 
-Ở thời điểm này service có thể chưa kết nối được SP4000 vì UART5 chưa được bật
-hoặc cấu hình Serial vẫn đang dùng port mặc định. API `8082` vẫn có thể hoạt
-động để nhận cấu hình.
+Nếu UART5 đã bật và PC Communication Password của tủ là `0000`, không cần gọi
+Postman hoặc API cấu hình Serial. Nếu password khác, sửa trực tiếp file cấu
+hình như mục 7.
 
 ## 4. Bật UART5 trên Armbian
 
@@ -238,21 +242,28 @@ Kiểm tra trước khi cấp tín hiệu:
 - Không có BabyWare, WinLoad, IP150 hoặc thiết bị Serial khác cùng giữ phiên
   giao tiếp với SP4000.
 
-## 7. Cấu hình Serial cho paradosp
+## 7. Cấu hình Serial không cần Postman
 
-API cấu hình chạy tại `http://127.0.0.1:8082`. Gửi đủ năm field sau, thay
-`0000` bằng PC Communication Password thật của tủ:
+Ở lần cài mới, script đã tạo sẵn:
+
+```python
+CONNECTION_TYPE = "Serial"
+SERIAL_PORT = "/dev/ttyS1"
+SERIAL_BAUD = 9600
+SERIAL_ENCRYPTED = False
+PASSWORD = "0000"
+```
+
+Nếu PC Communication Password thật của tủ không phải `0000`, mở file:
 
 ```bash
-curl -X PUT http://127.0.0.1:8082/api/v1/config/serial \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "CONNECTION_TYPE": "Serial",
-    "SERIAL_PORT": "/dev/ttyS1",
-    "SERIAL_BAUD": 9600,
-    "SERIAL_ENCRYPTED": false,
-    "PASSWORD": "0000"
-  }'
+sudo nano /etc/paradosp/paradosp.conf
+```
+
+Sửa duy nhất dòng `PASSWORD`, lưu file rồi chạy:
+
+```bash
+sudo systemctl restart paradosp
 ```
 
 `PASSWORD` là PC Communication Password trong BabyWare, không phải installer
@@ -265,13 +276,14 @@ Với SP4000 thông thường, giữ:
 "SERIAL_ENCRYPTED": false
 ```
 
-API lưu cấu hình tại:
+Nếu trước đây đã từng cấu hình bằng API/Postman, file sau sẽ được ưu tiên hơn
+cấu hình mặc định:
 
 ```text
 /var/lib/paradosp/.pai/safelink-serial.json
 ```
 
-Đọc lại cấu hình đang chạy:
+Đọc lại cấu hình đang chạy để xác nhận:
 
 ```bash
 curl http://127.0.0.1:8082/api/v1/config/serial
@@ -325,7 +337,53 @@ Trạng thái đạt:
 - `/panel` có model, firmware và serial number.
 - `/zones` có dữ liệu zone hiện tại.
 
-## 9. Chẩn đoán theo dấu hiệu log
+Heartbeat gửi ngay khi nhận được snapshot zone đầu tiên, sau đó gửi mỗi 60
+giây. Kiểm tra trực tiếp:
+
+```bash
+curl http://127.0.0.1:8082/api/v1/health
+```
+
+Các field cần tăng hoặc có giá trị:
+
+```text
+heartbeat_push_count
+last_heartbeat_at
+```
+
+Trong journal sẽ có dòng:
+
+```text
+SafeLink heartbeat delivered: N zone(s)
+```
+
+Tên JSON hiện vẫn là `heatbeath` để tương thích với contract cũ. `typeevent`
+là sự kiện thay đổi tức thời như zone mở/đóng, arm/disarm, alarm hoặc trouble.
+Các mẫu điện áp DEBUG định kỳ (`battery`, `dc`, `vdc`) bị lọc khỏi
+`typeevent`; cảnh báo nguồn/battery mức CRITICAL vẫn được gửi.
+
+## 9. Log theo ngày và nén gzip
+
+Log hiện tại:
+
+```text
+/var/log/paradosp/paradosp.log
+```
+
+Qua nửa đêm, file cũ có dạng:
+
+```text
+/var/log/paradosp/paradosp.log.2026-10-16.gz
+```
+
+Mặc định giữ 30 file log cũ. Xem log hiện tại và log đã nén:
+
+```bash
+sudo tail -f /var/log/paradosp/paradosp.log
+sudo zless /var/log/paradosp/paradosp.log.2026-10-16.gz
+```
+
+## 10. Chẩn đoán theo dấu hiệu log
 
 | Dấu hiệu | Kết luận gần nhất | Việc cần làm |
 |---|---|---|
@@ -341,7 +399,7 @@ Dòng `Unable to connect to alarm via Serial(...)` là lỗi tổng quát. Luôn
 các dòng ngay trước nó để xác định lỗi mở device, handshake, authentication hay
 đọc memory.
 
-## 10. Bật và tắt debug Serial
+## 11. Bật và tắt debug Serial
 
 Mở file:
 
@@ -381,7 +439,7 @@ Rồi restart service:
 sudo systemctl restart paradosp
 ```
 
-## 11. Cập nhật binary về sau
+## 12. Cập nhật binary về sau
 
 Chép binary `paradosp` mới và chạy lại cùng script:
 
@@ -390,8 +448,9 @@ sudo sh setup-orange-pi.sh ./paradosp
 ```
 
 Script thay binary bằng file mới, tạo lại unit systemd và restart service. Nó
-không ghi đè `/etc/paradosp/paradosp.conf` nếu file đã tồn tại. State và cấu
-hình Serial trong `/var/lib/paradosp` được giữ lại.
+không ghi đè giá trị đã có trong `/etc/paradosp/paradosp.conf`; khi nâng cấp từ
+bản cũ, nó chỉ bổ sung các khóa log theo ngày còn thiếu. State và cấu hình
+Serial trong `/var/lib/paradosp` được giữ lại.
 
 Sau cập nhật, xác nhận lại:
 
@@ -402,7 +461,7 @@ curl http://127.0.0.1:8082/api/v1/health
 curl http://127.0.0.1:8082/api/v1/zones
 ```
 
-## 12. Checklist bàn giao
+## 13. Checklist bàn giao
 
 - [ ] `uname -m` trả `aarch64`.
 - [ ] `paradosp --self-test` thành công.
@@ -417,5 +476,7 @@ curl http://127.0.0.1:8082/api/v1/zones
 - [ ] Log có `Authentication Success` và `Running`.
 - [ ] `/api/v1/health` có `run_state=RUN`.
 - [ ] `/api/v1/panel` và `/api/v1/zones` trả dữ liệu thật.
+- [ ] `heartbeat_push_count` tăng và `last_heartbeat_at` có giá trị.
+- [ ] Có file `/var/log/paradosp/paradosp.log`; file ngày cũ có đuôi `.gz`.
 - [ ] Đã tắt packet debug sau khi nghiệm thu.
 - [ ] Port `8082` chỉ truy cập từ mạng quản trị tin cậy.

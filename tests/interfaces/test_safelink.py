@@ -1,6 +1,8 @@
 import asyncio
+import datetime
 import json
 import stat
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +12,7 @@ from paradox.interfaces import safelink as safelink_module
 from paradox.interfaces.safelink import (
     Delivery,
     SafeLinkInterface,
+    is_debug_power_telemetry,
     make_webhook_payload,
     validate_serial_config,
 )
@@ -64,6 +67,9 @@ class FakeSession:
         self.calls.append((url, kwargs))
         return FakeResponse()
 
+    def close(self):
+        return None
+
 
 def test_validate_serial_config_preserves_exact_contract():
     value = serial_config()
@@ -117,6 +123,32 @@ async def test_outbound_json_has_only_type_and_unchanged_data(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_nested_datetime_is_encoded_as_iso_8601(tmp_path):
+    service = SafeLinkInterface(FakeAlarm(), interface_config(tmp_path))
+    session = FakeSession()
+    occurred_at = datetime.datetime(
+        2026,
+        10,
+        17,
+        8,
+        30,
+        45,
+        tzinfo=datetime.timezone.utc,
+    )
+    payload = make_webhook_payload(
+        "typeevent",
+        {"additional_data": {"occurred_at": occurred_at}},
+    )
+
+    delivered = service._deliver(session, Delivery(payload, "live event"))
+
+    assert delivered is True
+    assert json.loads(session.calls[0][1]["data"])["data"]["additional_data"] == {
+        "occurred_at": "2026-10-17T08:30:45+00:00"
+    }
+
+
+@pytest.mark.asyncio
 async def test_live_event_uses_exact_type_and_event_props(tmp_path):
     alarm = FakeAlarm()
     service = SafeLinkInterface(alarm, interface_config(tmp_path))
@@ -127,6 +159,42 @@ async def test_live_event_uses_exact_type_and_event_props(tmp_path):
 
     delivery = service._outbound.get_nowait()
     assert delivery == Delivery({"type": "typeevent", "data": props}, "live event")
+
+
+@pytest.mark.asyncio
+async def test_routine_power_voltage_event_is_filtered(tmp_path):
+    service = SafeLinkInterface(FakeAlarm(), interface_config(tmp_path))
+    props = {
+        "type": "system",
+        "label": "power",
+        "level": "DEBUG",
+        "property": "battery",
+        "tags": ["voltage", "battery"],
+        "value": 13.8,
+    }
+
+    assert is_debug_power_telemetry(props) is True
+    service._on_event(SimpleNamespace(props=props))
+
+    assert service._outbound.empty()
+    assert service.get_health()["filtered_events"] == 1
+
+
+@pytest.mark.asyncio
+async def test_power_trouble_event_is_never_filtered(tmp_path):
+    service = SafeLinkInterface(FakeAlarm(), interface_config(tmp_path))
+    props = {
+        "type": "system",
+        "level": "CRITICAL",
+        "property": "battery_failure_trouble",
+        "tags": ["battery", "trouble"],
+        "value": True,
+    }
+
+    assert is_debug_power_telemetry(props) is False
+    service._on_event(SimpleNamespace(props=props))
+
+    assert service._outbound.get_nowait().payload["data"] == props
 
 
 @pytest.mark.asyncio
@@ -142,6 +210,56 @@ async def test_status_snapshot_keeps_raw_zone_map(tmp_path):
 
     assert service.get_zones() == {1: {"id": 1, "label": "Front", "open": False}}
     assert service.get_panel_details()["data"] == alarm.storage.data
+    assert service._heartbeat_requested.is_set()
+
+
+@pytest.mark.asyncio
+async def test_successful_push_tracks_heartbeat_and_live_event_separately(tmp_path):
+    service = SafeLinkInterface(FakeAlarm(), interface_config(tmp_path))
+    session = FakeSession()
+
+    service._deliver(
+        session,
+        Delivery(make_webhook_payload("heatbeath", {1: {"open": False}}), "heartbeat"),
+    )
+    service._deliver(
+        session,
+        Delivery(make_webhook_payload("typeevent", {"type": "zone"}), "live event"),
+    )
+
+    health = service.get_health()
+    assert health["heartbeat_push_count"] == 1
+    assert health["event_push_count"] == 1
+    assert health["last_heartbeat_at"] is not None
+    assert health["last_event_push_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_first_zone_snapshot_triggers_immediate_heartbeat(monkeypatch, tmp_path):
+    alarm = FakeAlarm()
+    alarm.storage.data = {"zone": {1: {"id": 1, "open": False}}}
+    service = SafeLinkInterface(alarm, interface_config(tmp_path))
+    session = FakeSession()
+    delivered = threading.Event()
+    original_post = session.post
+
+    def notifying_post(url, **kwargs):
+        response = original_post(url, **kwargs)
+        delivered.set()
+        return response
+
+    session.post = notifying_post
+    monkeypatch.setattr(safelink_module.requests, "Session", lambda: session)
+    service._on_status_update(status={"zone": {1: {"open": False}}})
+    worker = threading.Thread(target=service._delivery_loop, daemon=True)
+    worker.start()
+    try:
+        assert delivered.wait(timeout=2)
+    finally:
+        service._stop.set()
+        worker.join(timeout=2)
+
+    assert json.loads(session.calls[0][1]["data"])["type"] == "heatbeath"
 
 
 @pytest.mark.asyncio

@@ -6,8 +6,12 @@ import platform
 import sys
 from typing import List, Optional
 
-
 DEFAULT_CONFIG_TEXT = (
+    'CONNECTION_TYPE = "Serial"\n'
+    'SERIAL_PORT = "/dev/ttyS1"\n'
+    "SERIAL_BAUD = 9600\n"
+    "SERIAL_ENCRYPTED = False\n"
+    'PASSWORD = "0000"\n'
     'SAFELINK_CRAWL_URL = "https://safelinksystem.app/core/webhook/ultrasync/crawl"\n'
 )
 
@@ -22,7 +26,7 @@ def prepare_arguments(arguments: List[str], home: Optional[Path] = None) -> List
     config_dir.mkdir(parents=True, exist_ok=True)
     if not config_file.exists():
         config_file.write_text(DEFAULT_CONFIG_TEXT, encoding="utf-8")
-        os.chmod(config_file, 0o666)
+        os.chmod(config_file, 0o600)
 
     return [*arguments, "--config", str(config_file)]
 

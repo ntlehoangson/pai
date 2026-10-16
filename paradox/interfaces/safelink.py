@@ -53,6 +53,7 @@ MAX_RETRIES = 3
 EVENT_QUEUE_SIZE = 256
 HEARTBEAT_TYPE = "heatbeath"
 EVENT_TYPE = "typeevent"
+NOISY_POWER_PROPERTIES = frozenset(("battery", "dc", "vdc"))
 
 Delivery = namedtuple("Delivery", "payload description")
 
@@ -107,6 +108,24 @@ def validate_serial_config(value: Any) -> Dict[str, Any]:
 def make_webhook_payload(type_value: str, data: Any) -> Dict[str, Any]:
     """Wrap data without renaming, flattening or enriching any data field."""
     return {"type": type_value, "data": deepcopy(data)}
+
+
+def is_debug_power_telemetry(props: Any) -> bool:
+    """Return True only for routine voltage samples, never power alarms."""
+    if not isinstance(props, Mapping):
+        return False
+
+    level = str(props.get("level", "")).upper()
+    property_name = str(props.get("property", "")).lower()
+    tags = props.get("tags", ())
+    if not isinstance(tags, (list, tuple, set, frozenset)):
+        tags = ()
+
+    return (
+        level == "DEBUG"
+        and property_name in NOISY_POWER_PROPERTIES
+        and "voltage" in {str(tag).lower() for tag in tags}
+    )
 
 
 class _SafeLinkHTTPServer(ThreadingHTTPServer):
@@ -223,8 +242,14 @@ class SafeLinkInterface(Interface):
         self._storage = {}
         self._last_status_at = None
         self._last_push_at = None
+        self._last_heartbeat_at = None
+        self._last_event_push_at = None
         self._last_push_error = None
         self._dropped_events = 0
+        self._filtered_events = 0
+        self._heartbeat_push_count = 0
+        self._event_push_count = 0
+        self._heartbeat_requested = threading.Event()
 
         # This runs before Paradox.full_connect(), so persisted settings are
         # guaranteed to be applied before the serial transport is constructed.
@@ -292,6 +317,20 @@ class SafeLinkInterface(Interface):
         next_heartbeat = time.monotonic() + PUSH_INTERVAL_SECONDS
         try:
             while not self._stop.is_set():
+                now = time.monotonic()
+                if self._heartbeat_requested.is_set() or now >= next_heartbeat:
+                    self._heartbeat_requested.clear()
+                    zones = self.get_zones(allow_unavailable=True)
+                    if zones is not None:
+                        payload = make_webhook_payload(HEARTBEAT_TYPE, zones)
+                        self._deliver(session, Delivery(payload, "heartbeat"))
+                    else:
+                        logger.debug(
+                            "SafeLink heartbeat waiting for the first zone snapshot"
+                        )
+                    next_heartbeat = time.monotonic() + PUSH_INTERVAL_SECONDS
+                    continue
+
                 wait = max(0.0, next_heartbeat - time.monotonic())
                 try:
                     delivery = self._outbound.get(timeout=min(wait, 1.0))
@@ -301,13 +340,6 @@ class SafeLinkInterface(Interface):
                 if delivery is not None:
                     self._deliver(session, delivery)
                     self._outbound.task_done()
-
-                if time.monotonic() >= next_heartbeat:
-                    zones = self.get_zones(allow_unavailable=True)
-                    if zones is not None:
-                        payload = make_webhook_payload(HEARTBEAT_TYPE, zones)
-                        self._deliver(session, Delivery(payload, "heartbeat"))
-                    next_heartbeat = time.monotonic() + PUSH_INTERVAL_SECONDS
         finally:
             session.close()
 
@@ -328,12 +360,12 @@ class SafeLinkInterface(Interface):
                 delivery.description,
                 exc,
             )
-            return
+            return False
 
         attempts = MAX_RETRIES + 1
         for attempt in range(attempts):
             if self._stop.is_set():
-                return
+                return False
             try:
                 response = session.post(
                     self.conf.SAFELINK_CRAWL_URL,
@@ -345,11 +377,23 @@ class SafeLinkInterface(Interface):
                     ),
                 )
                 response.raise_for_status()
+                payload_type = delivery.payload.get("type")
+                pushed_at = time.time()
                 with self._lock:
-                    self._last_push_at = time.time()
+                    self._last_push_at = pushed_at
                     self._last_push_error = None
-                logger.debug("SafeLink %s delivered", delivery.description)
-                return
+                    if payload_type == HEARTBEAT_TYPE:
+                        self._last_heartbeat_at = pushed_at
+                        self._heartbeat_push_count += 1
+                    elif payload_type == EVENT_TYPE:
+                        self._last_event_push_at = pushed_at
+                        self._event_push_count += 1
+                if payload_type == HEARTBEAT_TYPE:
+                    zone_count = len(delivery.payload.get("data", {}))
+                    logger.info("SafeLink heartbeat delivered: %d zone(s)", zone_count)
+                else:
+                    logger.debug("SafeLink %s delivered", delivery.description)
+                return True
             except (
                 requests.RequestException,
                 UnicodeError,
@@ -365,8 +409,9 @@ class SafeLinkInterface(Interface):
                         attempts,
                         exc,
                     )
-                    return
+                    return False
                 self._stop.wait(min(2**attempt, 30))
+        return False
 
     def _on_panel_detected(self, panel):
         with self._lock:
@@ -388,12 +433,26 @@ class SafeLinkInterface(Interface):
         storage = construct_free(deepcopy(dict(self.alarm.storage.data)))
         zones = deepcopy(storage.get("zone", {}))
         with self._lock:
+            first_zone_snapshot = self._zones is None
             self._storage = storage
             self._zones = zones
             self._last_status_at = time.time()
+        if first_zone_snapshot:
+            self._heartbeat_requested.set()
 
     def _on_event(self, event):
-        payload = make_webhook_payload(EVENT_TYPE, event.props)
+        props = event.props
+        if is_debug_power_telemetry(props):
+            with self._lock:
+                self._filtered_events += 1
+            logger.debug(
+                "SafeLink filtered routine power telemetry: %s=%s",
+                props.get("property"),
+                props.get("value"),
+            )
+            return
+
+        payload = make_webhook_payload(EVENT_TYPE, props)
         try:
             self._outbound.put_nowait(Delivery(payload, "live event"))
         except queue.Full:
@@ -431,9 +490,14 @@ class SafeLinkInterface(Interface):
                 "zones_available": self._zones is not None,
                 "last_status_at": self._last_status_at,
                 "last_push_at": self._last_push_at,
+                "last_heartbeat_at": self._last_heartbeat_at,
+                "last_event_push_at": self._last_event_push_at,
                 "last_push_error": self._last_push_error,
                 "queued_events": self._outbound.qsize(),
                 "dropped_events": self._dropped_events,
+                "filtered_events": self._filtered_events,
+                "heartbeat_push_count": self._heartbeat_push_count,
+                "event_push_count": self._event_push_count,
             }
 
     def get_public_serial_config(self):

@@ -1,3 +1,4 @@
+import os
 import stat
 
 from paradox import paradosp_app
@@ -9,7 +10,8 @@ def test_prepare_arguments_creates_default_config(tmp_path):
 
     assert arguments == ["--config", str(config_file)]
     assert config_file.read_text("utf-8") == paradosp_app.DEFAULT_CONFIG_TEXT
-    assert stat.S_IMODE(config_file.stat().st_mode) == 0o666
+    if os.name != "nt":
+        assert stat.S_IMODE(config_file.stat().st_mode) == 0o600
 
 
 def test_prepare_arguments_preserves_explicit_short_config(tmp_path):

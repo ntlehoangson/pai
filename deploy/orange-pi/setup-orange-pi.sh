@@ -6,6 +6,7 @@ SOURCE_BINARY="${1:-./paradosp}"
 INSTALL_DIR="/opt/paradosp"
 CONFIG_DIR="/etc/paradosp"
 STATE_DIR="/var/lib/paradosp"
+LOG_DIR="/var/log/paradosp"
 CONFIG_FILE="${CONFIG_DIR}/paradosp.conf"
 SERVICE_FILE="/etc/systemd/system/paradosp.service"
 
@@ -24,16 +25,47 @@ if [ ! -f "${SOURCE_BINARY}" ]; then
     exit 1
 fi
 
-install -d -m 0755 "${INSTALL_DIR}" "${CONFIG_DIR}" "${STATE_DIR}"
+install -d -m 0755 "${INSTALL_DIR}" "${CONFIG_DIR}" "${STATE_DIR}" "${LOG_DIR}"
 install -m 0755 "${SOURCE_BINARY}" "${INSTALL_DIR}/paradosp.new"
 mv -f "${INSTALL_DIR}/paradosp.new" "${INSTALL_DIR}/paradosp"
 
 if [ ! -f "${CONFIG_FILE}" ]; then
     printf '%s\n' \
+        'CONNECTION_TYPE = "Serial"' \
+        'SERIAL_PORT = "/dev/ttyS1"' \
+        'SERIAL_BAUD = 9600' \
+        'SERIAL_ENCRYPTED = False' \
+        'PASSWORD = "0000"' \
         'SAFELINK_CRAWL_URL = "https://safelinksystem.app/core/webhook/ultrasync/crawl"' \
+        'LOGGING_LEVEL_FILE = 20' \
+        'LOGGING_FILE = "/var/log/paradosp/paradosp.log"' \
+        'LOGGING_FILE_ROTATION = "daily"' \
+        'LOGGING_FILE_COMPRESS = True' \
+        'LOGGING_FILE_MAX_FILES = 30' \
         > "${CONFIG_FILE}"
 fi
-chmod 0666 "${CONFIG_FILE}"
+
+# Upgrade older installations without overwriting operator-owned values.
+if ! grep -Eq '^[[:space:]]*LOGGING_FILE[[:space:]]*=' "${CONFIG_FILE}"; then
+    printf '%s\n' 'LOGGING_FILE = "/var/log/paradosp/paradosp.log"' >> "${CONFIG_FILE}"
+fi
+if ! grep -Eq '^[[:space:]]*LOGGING_LEVEL_FILE[[:space:]]*=' "${CONFIG_FILE}"; then
+    printf '%s\n' 'LOGGING_LEVEL_FILE = 20' >> "${CONFIG_FILE}"
+fi
+if ! grep -Eq '^[[:space:]]*LOGGING_FILE_ROTATION[[:space:]]*=' "${CONFIG_FILE}"; then
+    printf '%s\n' 'LOGGING_FILE_ROTATION = "daily"' >> "${CONFIG_FILE}"
+fi
+if ! grep -Eq '^[[:space:]]*LOGGING_FILE_COMPRESS[[:space:]]*=' "${CONFIG_FILE}"; then
+    printf '%s\n' 'LOGGING_FILE_COMPRESS = True' >> "${CONFIG_FILE}"
+fi
+if ! grep -Eq '^[[:space:]]*LOGGING_FILE_MAX_FILES[[:space:]]*=' "${CONFIG_FILE}"; then
+    printf '%s\n' 'LOGGING_FILE_MAX_FILES = 30' >> "${CONFIG_FILE}"
+fi
+chmod 0600 "${CONFIG_FILE}"
+
+if [ ! -c /dev/ttyS1 ]; then
+    echo "WARNING: /dev/ttyS1 is not available. Enable overlays=uart5 and reboot before starting paradosp." >&2
+fi
 
 cat > "${SERVICE_FILE}" <<'EOF'
 [Unit]

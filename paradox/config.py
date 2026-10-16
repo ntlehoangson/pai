@@ -18,6 +18,12 @@ class Config:
             int,
             (0, 0xFFFFFFFF),
         ),  # Max old log files to keep
+        "LOGGING_FILE_ROTATION": (
+            "size",
+            str,
+            ["size", "daily"],
+        ),  # Rotate by max size or once per local calendar day
+        "LOGGING_FILE_COMPRESS": False,  # Gzip rotated log files
         "LOGGING_DUMP_PACKETS": False,  # Dump RAW Packets to log
         "LOGGING_DUMP_MESSAGES": False,  # Dump Messages to log
         "LOGGING_DUMP_STATUS": False,  # Dump Status to log
@@ -34,7 +40,7 @@ class Config:
         # Orange Pi Zero 3: UART5 exposed on the 26-pin header.  This is only
         # the board-UART default; a USB-TTL adapter should use its stable
         # /dev/serial/by-id/... path instead.
-        "SERIAL_PORT": "/dev/ttyS5",  # Pathname of the Serial Port
+        "SERIAL_PORT": "/dev/ttyS1",  # UART5 is enumerated as ttyS1 on this Orange Pi Zero 3 image
         "SERIAL_BAUD": 9600,  # Baud rate of the Serial Port. Use 38400(default setting) or 57600 for EVO
         "SERIAL_ENCRYPTED": False,  # Set True for EVO panels with full serial encryption (firmware >= 7.50)
         # PRT3 Connection Details (Paradox PRT3 Printer Module — ASCII serial protocol)
@@ -119,7 +125,7 @@ class Config:
         ),  # Minimum time drift in seconds to initiate time sync
         "SYNC_TIME_TIMEZONE": "",  # By default pai uses the same timezone as pai host
         "PASSWORD": (
-            None,
+            "0000",
             [int, str, bytes, type(None)],
         ),  # PC Password. Set to None if Panel has no Password. In Babyware: Right click on your panel -> Properties -> PC Communication (Babyware) -> PC Communication (Babyware) Tab.
         "POWER_UPDATE_INTERVAL": (

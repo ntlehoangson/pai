@@ -1,7 +1,10 @@
 import asyncio
+import gzip
 import logging
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+import os
 import platform
+import shutil
 import signal
 import sys
 import time
@@ -17,6 +20,41 @@ from paradox.paradox import Paradox
 logger = logging.getLogger("PAI")
 
 
+def _gzip_rotator(source, destination):
+    """Compress a completed log rotation without retaining the plain file."""
+    with open(source, "rb") as source_stream:
+        with gzip.open(destination, "wb") as destination_stream:
+            shutil.copyfileobj(source_stream, destination_stream)
+    os.remove(source)
+
+
+def _build_logfile_handler():
+    if cfg.LOGGING_FILE_ROTATION == "daily":
+        handler = TimedRotatingFileHandler(
+            cfg.LOGGING_FILE,
+            when="midnight",
+            interval=1,
+            backupCount=cfg.LOGGING_FILE_MAX_FILES,
+            encoding="utf-8",
+            delay=False,
+        )
+        handler.suffix = "%Y-%m-%d"
+    else:
+        handler = RotatingFileHandler(
+            cfg.LOGGING_FILE,
+            mode="a",
+            maxBytes=cfg.LOGGING_FILE_MAX_SIZE * 1024 * 1024,
+            backupCount=cfg.LOGGING_FILE_MAX_FILES,
+            encoding="utf-8",
+            delay=False,
+        )
+
+    if cfg.LOGGING_FILE_COMPRESS:
+        handler.namer = lambda filename: filename + ".gz"
+        handler.rotator = _gzip_rotator
+    return handler
+
+
 def get_format(level):
     if level <= logging.DEBUG:
         return (
@@ -30,14 +68,7 @@ def configure_logger(logger):
     logger_level = cfg.LOGGING_LEVEL_CONSOLE
 
     if cfg.LOGGING_FILE:
-        logfile_handler = RotatingFileHandler(
-            cfg.LOGGING_FILE,
-            mode="a",
-            maxBytes=cfg.LOGGING_FILE_MAX_SIZE * 1024 * 1024,
-            backupCount=cfg.LOGGING_FILE_MAX_FILES,
-            encoding=None,
-            delay=0,
-        )
+        logfile_handler = _build_logfile_handler()
 
         logfile_handler.setLevel(cfg.LOGGING_LEVEL_FILE)
         logfile_handler.setFormatter(logging.Formatter(get_format(logger_level)))
