@@ -51,8 +51,8 @@ CONNECT_TIMEOUT_SECONDS = 5
 READ_TIMEOUT_SECONDS = 10
 MAX_RETRIES = 3
 EVENT_QUEUE_SIZE = 256
-HEARTBEAT_TYPE = "heatbeath"
-EVENT_TYPE = "typeevent"
+HEARTBEAT_TYPE = "heartbeat"
+IMMEDIATELY_TYPE = "immediately"
 NOISY_POWER_PROPERTIES = frozenset(("battery", "dc", "vdc"))
 
 Delivery = namedtuple("Delivery", "payload description")
@@ -385,7 +385,7 @@ class SafeLinkInterface(Interface):
                     if payload_type == HEARTBEAT_TYPE:
                         self._last_heartbeat_at = pushed_at
                         self._heartbeat_push_count += 1
-                    elif payload_type == EVENT_TYPE:
+                    elif payload_type == IMMEDIATELY_TYPE:
                         self._last_event_push_at = pushed_at
                         self._event_push_count += 1
                 if payload_type == HEARTBEAT_TYPE:
@@ -400,18 +400,36 @@ class SafeLinkInterface(Interface):
                 TypeError,
                 ValueError,
             ) as exc:
+                error_detail = self._format_delivery_error(exc)
                 with self._lock:
-                    self._last_push_error = str(exc)
+                    self._last_push_error = error_detail
                 if attempt + 1 >= attempts:
                     logger.error(
-                        "SafeLink %s delivery failed after %d attempt(s): %s",
+                        "SafeLink %s delivery failed after %d attempt(s) "
+                        "(payload=%d bytes): %s",
                         delivery.description,
                         attempts,
-                        exc,
+                        len(body),
+                        error_detail,
                     )
                     return False
                 self._stop.wait(min(2**attempt, 30))
         return False
+
+    @staticmethod
+    def _format_delivery_error(exc):
+        """Include a bounded server response body in HTTP diagnostics."""
+        detail = str(exc)
+        response = getattr(exc, "response", None)
+        if response is None:
+            return detail
+
+        response_text = (getattr(response, "text", "") or "").strip()
+        if not response_text:
+            return detail
+
+        response_text = " ".join(response_text.split())
+        return "{}; response={}".format(detail, response_text[:1024])
 
     def _on_panel_detected(self, panel):
         with self._lock:
@@ -452,7 +470,7 @@ class SafeLinkInterface(Interface):
             )
             return
 
-        payload = make_webhook_payload(EVENT_TYPE, props)
+        payload = make_webhook_payload(IMMEDIATELY_TYPE, props)
         try:
             self._outbound.put_nowait(Delivery(payload, "live event"))
         except queue.Full:

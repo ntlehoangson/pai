@@ -20,7 +20,10 @@ class SerialCommunication(Connection, ConnectionHandler):
         self.connected_future = None
 
     def on_connection_loss(self):
-        logger.error("Connection to panel was lost")
+        if self._closing:
+            logger.info("Serial connection closed by local shutdown")
+        else:
+            logger.error("Connection to panel was lost")
         self.connected = False
         if not self.connected_future.done():
             self.connected_future.set_result(self.connected)

@@ -86,6 +86,7 @@ def configure_logger(logger):
 async def _run(alarm: Paradox):
     interface_manager = InterfaceManager(alarm, config=cfg)
     interface_manager.start()
+    shutting_down = False
 
     logger.info("=" * 56)
     logger.info(" PAI %s", VERSION)
@@ -101,7 +102,9 @@ async def _run(alarm: Paradox):
     logger.info("=" * 56)
 
     async def exit_handler(signame=None):
-        nonlocal alarm, interface_manager
+        nonlocal alarm, interface_manager, shutting_down
+
+        shutting_down = True
 
         if signame is not None:
             logger.info(f"Captured signal {signame}. Exiting")
@@ -119,9 +122,12 @@ async def _run(alarm: Paradox):
     loop = asyncio.get_running_loop()
     for signame in ("SIGINT", "SIGTERM"):
         sig = getattr(signal, signame)
-        loop.add_signal_handler(
-            sig, lambda s=signame: asyncio.ensure_future(exit_handler(s))
-        )
+        try:
+            loop.add_signal_handler(
+                sig, lambda s=signame: asyncio.ensure_future(exit_handler(s))
+            )
+        except NotImplementedError:
+            logger.debug("Async signal handlers are unavailable on this platform")
 
     retry = 1
     connected_since = None
@@ -162,7 +168,8 @@ async def _run(alarm: Paradox):
                 await alarm.loop()
             else:
                 logger.error("Unable to connect to alarm via %s", describe_connection())
-            mark_disconnected()
+            if not shutting_down:
+                mark_disconnected()
 
             if alarm:
                 await asyncio.sleep(retry_time_wait)

@@ -11,6 +11,8 @@ import requests
 from paradox.interfaces import safelink as safelink_module
 from paradox.interfaces.safelink import (
     Delivery,
+    HEARTBEAT_TYPE,
+    IMMEDIATELY_TYPE,
     SafeLinkInterface,
     is_debug_power_telemetry,
     make_webhook_payload,
@@ -96,9 +98,9 @@ def test_validate_serial_config_rejects_bad_values(override, error):
 def test_webhook_wrapper_does_not_modify_data():
     data = {"1": {"id": 1, "open": True, "tamper": False}}
 
-    payload = make_webhook_payload("heatbeath", data)
+    payload = make_webhook_payload(HEARTBEAT_TYPE, data)
 
-    assert payload == {"type": "heatbeath", "data": data}
+    assert payload == {"type": "heartbeat", "data": data}
     assert payload["data"] is not data
 
 
@@ -110,14 +112,14 @@ async def test_outbound_json_has_only_type_and_unchanged_data(tmp_path):
 
     service._deliver(
         session,
-        Delivery(make_webhook_payload("heatbeath", data), "heartbeat"),
+        Delivery(make_webhook_payload(HEARTBEAT_TYPE, data), "heartbeat"),
     )
 
     assert len(session.calls) == 1
     url, request = session.calls[0]
     assert url == "https://example.invalid/crawl"
     assert json.loads(request["data"]) == {
-        "type": "heatbeath",
+        "type": "heartbeat",
         "data": {"1": data[1]},
     }
 
@@ -136,7 +138,7 @@ async def test_nested_datetime_is_encoded_as_iso_8601(tmp_path):
         tzinfo=datetime.timezone.utc,
     )
     payload = make_webhook_payload(
-        "typeevent",
+        IMMEDIATELY_TYPE,
         {"additional_data": {"occurred_at": occurred_at}},
     )
 
@@ -158,7 +160,7 @@ async def test_live_event_uses_exact_type_and_event_props(tmp_path):
     service._on_event(event)
 
     delivery = service._outbound.get_nowait()
-    assert delivery == Delivery({"type": "typeevent", "data": props}, "live event")
+    assert delivery == Delivery({"type": "immediately", "data": props}, "live event")
 
 
 @pytest.mark.asyncio
@@ -220,11 +222,17 @@ async def test_successful_push_tracks_heartbeat_and_live_event_separately(tmp_pa
 
     service._deliver(
         session,
-        Delivery(make_webhook_payload("heatbeath", {1: {"open": False}}), "heartbeat"),
+        Delivery(
+            make_webhook_payload(HEARTBEAT_TYPE, {1: {"open": False}}),
+            "heartbeat",
+        ),
     )
     service._deliver(
         session,
-        Delivery(make_webhook_payload("typeevent", {"type": "zone"}), "live event"),
+        Delivery(
+            make_webhook_payload(IMMEDIATELY_TYPE, {"type": "zone"}),
+            "live event",
+        ),
     )
 
     health = service.get_health()
@@ -259,7 +267,20 @@ async def test_first_zone_snapshot_triggers_immediate_heartbeat(monkeypatch, tmp
         service._stop.set()
         worker.join(timeout=2)
 
-    assert json.loads(session.calls[0][1]["data"])["type"] == "heatbeath"
+    assert json.loads(session.calls[0][1]["data"])["type"] == "heartbeat"
+
+
+@pytest.mark.asyncio
+async def test_http_error_detail_includes_bounded_response_body(tmp_path):
+    service = SafeLinkInterface(FakeAlarm(), interface_config(tmp_path))
+    response = SimpleNamespace(text="database rejected payload\n" + ("x" * 2000))
+    error = requests.HTTPError("500 Server Error", response=response)
+
+    detail = service._format_delivery_error(error)
+
+    assert detail.startswith("500 Server Error; response=database rejected payload")
+    assert "\n" not in detail
+    assert len(detail) < 1100
 
 
 @pytest.mark.asyncio

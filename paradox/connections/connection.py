@@ -14,16 +14,21 @@ class Connection(AsyncMessageManager, ConnectionHandler):
     def __init__(self):
         super().__init__()
         self.connected = False
+        self._closing = False
         self._protocol: ConnectionProtocol = None
 
     def on_message(self, raw: bytes):
         self.schedule_raw_message_handling(raw)
 
     def on_connection(self):
+        self._closing = False
         logger.info("Connection established")
 
     def on_connection_loss(self):
-        logger.error("Connection was lost")
+        if self._closing:
+            logger.info("Connection closed by local shutdown")
+        else:
+            logger.error("Connection was lost")
         self.connected = False
 
     @property
@@ -50,8 +55,11 @@ class Connection(AsyncMessageManager, ConnectionHandler):
 
     async def close(self):
         if self._protocol:
-            await self._protocol.close()
-            self._protocol = None
+            self._closing = True
+            try:
+                await self._protocol.close()
+            finally:
+                self._protocol = None
         self.connected = False
 
     def variable_message_length(self, mode):
