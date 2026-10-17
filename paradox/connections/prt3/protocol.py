@@ -17,6 +17,7 @@ import logging
 from paradox.config import config as cfg
 from paradox.connections.framing import LineFramer
 from paradox.connections.protocol_base import ConnectionProtocol
+from paradox.lib.raw_logging import log_rx, log_tx
 
 logger = logging.getLogger("PAI").getChild(__name__)
 
@@ -50,6 +51,7 @@ class PRT3Protocol(ConnectionProtocol):
 
     def data_received(self, data: bytes):
         """Emit each complete \\r-terminated line to the handler."""
+        log_rx(data)
         for frame in self._framer.feed(data):
             if cfg.LOGGING_DUMP_PACKETS:
                 logger.debug("PRT3 <- %s", binascii.hexlify(frame.data))
@@ -71,6 +73,7 @@ class PRT3Protocol(ConnectionProtocol):
         framing is added here.
         """
         self.check_active()
+        log_tx(message)
 
         if cfg.LOGGING_DUMP_PACKETS:
             # AA (arm with code) and AD (disarm) embed the user code in the

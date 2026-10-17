@@ -14,6 +14,10 @@ import logging
 # LOGGING_FILE_MAX_SIZE = 10          # Max log file size in MB
 # LOGGING_FILE_MAX_FILES = 2          # Max old log files to keep
 # LOGGING_DUMP_PACKETS = False    	# Dump RAW Packets to log
+# LOGGING_RAW_TX_FILE = None          # Raw PAI -> Paradox traffic
+# LOGGING_RAW_RX_FILE = None          # Raw Paradox -> PAI traffic
+# LOGGING_RAW_MAX_FILES = 30          # Daily compressed raw log files to keep
+# LOGGING_RAW_COMPRESS = True         # Gzip completed daily raw traffic files
 # LOGGING_DUMP_MESSAGES = False   	# Dump Messages to log
 # LOGGING_DUMP_STATUS = False         # Dump Status to log
 # LOGGING_DUMP_EVENTS = False         # Dump Event details to log

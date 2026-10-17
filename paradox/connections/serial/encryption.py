@@ -3,6 +3,7 @@
 import logging
 
 from paradox.lib.crypto import encrypt_serial_message
+from paradox.lib.raw_logging import log_tx
 
 logger = logging.getLogger("PAI").getChild(__name__)
 
@@ -16,6 +17,7 @@ class EncryptedSerialTransport:
 
     def write(self, data: bytes) -> None:
         encrypted = encrypt_serial_message(data, self._key)
+        log_tx(encrypted)
         logger.debug(f"SER ENCRYPT: {len(data)}b → {len(encrypted)}b E0FE frame")
         self._transport.write(encrypted)
 

@@ -26,6 +26,7 @@ from paradox.hardware.evo.parsers import MODULE_PGM_PACKET_SLOTS
 from paradox.lib import ps
 from paradox.lib.async_message_manager import ErrorMessageHandler, EventMessageHandler
 from paradox.lib.handlers import PersistentHandler
+from paradox.lib.raw_logging import log_decoded
 from paradox.lib.utils import deep_merge, describe_connection, sanitize_key
 from paradox.parsers.status import convert_raw_status
 
@@ -471,6 +472,7 @@ class Paradox:
 
         try:
             recv_message = self.panel.parse_message(message, direction="frompanel")
+            log_decoded(recv_message)
 
             if cfg.LOGGING_DUMP_MESSAGES:
                 logger.debug("Message received: %s", recv_message)

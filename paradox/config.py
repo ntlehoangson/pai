@@ -25,6 +25,16 @@ class Config:
         ),  # Rotate by max size or once per local calendar day
         "LOGGING_FILE_COMPRESS": False,  # Gzip rotated log files
         "LOGGING_DUMP_PACKETS": False,  # Dump RAW Packets to log
+        "LOGGING_RAW_TX_FILE": (
+            None,
+            [type(None), str],
+        ),  # File for raw PAI -> panel traffic
+        "LOGGING_RAW_RX_FILE": (
+            None,
+            [type(None), str],
+        ),  # File for raw panel -> PAI traffic
+        "LOGGING_RAW_MAX_FILES": (30, int, (0, 0xFFFFFFFF)),
+        "LOGGING_RAW_COMPRESS": True,  # Gzip completed daily raw traffic files
         "LOGGING_DUMP_MESSAGES": False,  # Dump Messages to log
         "LOGGING_DUMP_STATUS": False,  # Dump Status to log
         "LOGGING_DUMP_EVENTS": False,  # Dump Event details to log

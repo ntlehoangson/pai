@@ -4,9 +4,11 @@ import logging
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 import os
 import platform
+import queue
 import shutil
 import signal
 import sys
+import threading
 import time
 
 from paradox import VERSION
@@ -18,6 +20,30 @@ from paradox.lib.utils import describe_connection, format_duration
 from paradox.paradox import Paradox
 
 logger = logging.getLogger("PAI")
+RAW_TX_LOGGER = logging.getLogger("PAI.raw.tx")
+RAW_RX_LOGGER = logging.getLogger("PAI.raw.rx")
+
+
+class _AsyncLogHandler(logging.Handler):
+    """Queue file writes so raw diagnostics never run on the panel loop."""
+
+    def __init__(self, target):
+        super().__init__()
+        self.target = target
+        self.records = queue.SimpleQueue()
+        self.worker = threading.Thread(target=self._write, daemon=True)
+        self.worker.start()
+
+    def emit(self, record):
+        self.records.put(record)
+
+    def _write(self):
+        while True:
+            record = self.records.get()
+            try:
+                self.target.handle(record)
+            except Exception:
+                pass
 
 
 def _gzip_rotator(source, destination):
@@ -28,28 +54,36 @@ def _gzip_rotator(source, destination):
     os.remove(source)
 
 
-def _build_logfile_handler():
-    if cfg.LOGGING_FILE_ROTATION == "daily":
+def _build_logfile_handler(filename=None, rotation=None, compress=None, max_files=None):
+    filename = cfg.LOGGING_FILE if filename is None else filename
+    rotation = cfg.LOGGING_FILE_ROTATION if rotation is None else rotation
+    compress = cfg.LOGGING_FILE_COMPRESS if compress is None else compress
+    max_files = cfg.LOGGING_FILE_MAX_FILES if max_files is None else max_files
+    parent = os.path.dirname(os.path.abspath(filename))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    if rotation == "daily":
         handler = TimedRotatingFileHandler(
-            cfg.LOGGING_FILE,
+            filename,
             when="midnight",
             interval=1,
-            backupCount=cfg.LOGGING_FILE_MAX_FILES,
+            backupCount=max_files,
             encoding="utf-8",
             delay=False,
         )
         handler.suffix = "%Y-%m-%d"
     else:
         handler = RotatingFileHandler(
-            cfg.LOGGING_FILE,
+            filename,
             mode="a",
             maxBytes=cfg.LOGGING_FILE_MAX_SIZE * 1024 * 1024,
-            backupCount=cfg.LOGGING_FILE_MAX_FILES,
+            backupCount=max_files,
             encoding="utf-8",
             delay=False,
         )
 
-    if cfg.LOGGING_FILE_COMPRESS:
+    if compress:
         handler.namer = lambda filename: filename + ".gz"
         handler.rotator = _gzip_rotator
     return handler
@@ -81,6 +115,24 @@ def configure_logger(logger):
     logger.addHandler(logconsole_handler)
 
     logger.setLevel(logger_level)
+
+    for raw_logger, filename in (
+        (RAW_TX_LOGGER, cfg.LOGGING_RAW_TX_FILE),
+        (RAW_RX_LOGGER, cfg.LOGGING_RAW_RX_FILE),
+    ):
+        if not filename:
+            continue
+        handler = _build_logfile_handler(
+            filename=filename,
+            rotation="daily",
+            compress=cfg.LOGGING_RAW_COMPRESS,
+            max_files=cfg.LOGGING_RAW_MAX_FILES,
+        )
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        raw_logger.addHandler(_AsyncLogHandler(handler))
+        raw_logger.setLevel(logging.INFO)
+        raw_logger.propagate = False
 
 
 async def _run(alarm: Paradox):

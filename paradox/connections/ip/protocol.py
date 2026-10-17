@@ -13,6 +13,7 @@ from paradox.connections.ip.parsers import (
     IPMessageType,
 )
 from paradox.connections.protocol_base import ConnectionProtocol
+from paradox.lib.raw_logging import log_rx, log_tx
 
 logger = logging.getLogger("PAI").getChild(__name__)
 
@@ -25,18 +26,17 @@ class IPConnectionProtocol(ConnectionProtocol):
         self._framer = IPFramer()
 
     def send_raw(self, raw):
+        self.check_active()
+        log_tx(raw)
         if cfg.LOGGING_DUMP_PACKETS:
             logger.debug(f"PAI -> IP (raw) {binascii.hexlify(raw)}")
-
-        self.check_active()
 
         self.transport.write(raw)
 
     def send_message(self, message):
+        self.check_active()
         if cfg.LOGGING_DUMP_PACKETS:
             logger.debug(f"PAI -> IP (payload) {binascii.hexlify(message)}")
-
-        self.check_active()
 
         msg = IPMessageRequest.build(
             dict(
@@ -52,6 +52,7 @@ class IPConnectionProtocol(ConnectionProtocol):
             ),
             password=self.key,
         )
+        log_tx(msg)
         if cfg.LOGGING_DUMP_PACKETS:
             logger.debug(f"PAI -> IP (raw) {binascii.hexlify(msg)}")
 
@@ -71,6 +72,7 @@ class IPConnectionProtocol(ConnectionProtocol):
             logger.warning(f"Wrong message detected: {message}")
 
     def data_received(self, recv_data):
+        log_rx(recv_data)
         for frame in self._framer.feed(recv_data):
             if cfg.LOGGING_DUMP_PACKETS:
                 logger.debug(f"IP -> PAI (raw) {binascii.hexlify(frame.data)}")

@@ -9,6 +9,7 @@ from paradox.connections.serial.encryption import (
 )
 from paradox.connections.serial.framing import SerialFramer
 from paradox.lib.crypto import decrypt_serial_message
+from paradox.lib.raw_logging import log_rx, log_tx
 
 logger = logging.getLogger("PAI").getChild(__name__)
 
@@ -39,13 +40,16 @@ class SerialConnectionProtocol(ConnectionProtocol):
         super().connection_made(transport)
 
     def send_message(self, message):
+        self.check_active()
+        if not self._encrypted_link:
+            log_tx(message)
         if cfg.LOGGING_DUMP_PACKETS:
             logger.debug(f"PAI -> SER {binascii.hexlify(message)}")
 
-        self.check_active()
         self.transport.write(message)
 
     def data_received(self, recv_data):
+        log_rx(recv_data)
         for frame in self._framer.feed(recv_data):
             if cfg.LOGGING_DUMP_PACKETS:
                 logger.debug(f"SER -> PAI {binascii.hexlify(frame.data)}")
