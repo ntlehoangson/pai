@@ -13,6 +13,7 @@ from paradox.interfaces.safelink import (
     Delivery,
     HEARTBEAT_TYPE,
     IMMEDIATELY_TYPE,
+    NOW_METADATA_TYPE,
     SafeLinkInterface,
     is_debug_power_telemetry,
     make_webhook_payload,
@@ -51,9 +52,13 @@ class FakeAlarm:
     def __init__(self):
         self.storage = SimpleNamespace(data={})
         self.reconfigured = None
+        self.status_refresh_requested = False
 
     async def reconfigure_connection(self, value):
         self.reconfigured = value
+
+    def request_status_refresh(self):
+        self.status_refresh_requested = True
 
 
 class FakeResponse:
@@ -161,6 +166,29 @@ async def test_live_event_uses_exact_type_and_event_props(tmp_path):
 
     delivery = service._outbound.get_nowait()
     assert delivery == Delivery({"type": "immediately", "data": props}, "live event")
+    assert alarm.status_refresh_requested is True
+
+
+@pytest.mark.asyncio
+async def test_live_event_status_refresh_publishes_now_metadata(tmp_path):
+    alarm = FakeAlarm()
+    alarm.storage.data = {
+        "zone": {1: {"id": 1, "label": "Front", "open": True}},
+    }
+    service = SafeLinkInterface(alarm, interface_config(tmp_path))
+
+    service._on_event(SimpleNamespace(props={"type": "zone", "id": 1}))
+    service._on_status_update(status={"zone": {1: {"open": True}}})
+
+    assert service._outbound.get_nowait().payload["type"] == IMMEDIATELY_TYPE
+    metadata = service._outbound.get_nowait()
+    assert metadata == Delivery(
+        {
+            "type": NOW_METADATA_TYPE,
+            "data": alarm.storage.data["zone"],
+        },
+        "current status after live event",
+    )
 
 
 @pytest.mark.asyncio

@@ -53,6 +53,7 @@ MAX_RETRIES = 3
 EVENT_QUEUE_SIZE = 256
 HEARTBEAT_TYPE = "heartbeat"
 IMMEDIATELY_TYPE = "immediately"
+NOW_METADATA_TYPE = "nowMetadata"
 NOISY_POWER_PROPERTIES = frozenset(("battery", "dc", "vdc"))
 
 Delivery = namedtuple("Delivery", "payload description")
@@ -250,6 +251,7 @@ class SafeLinkInterface(Interface):
         self._heartbeat_push_count = 0
         self._event_push_count = 0
         self._heartbeat_requested = threading.Event()
+        self._now_metadata_pending = False
 
         # This runs before Paradox.full_connect(), so persisted settings are
         # guaranteed to be applied before the serial transport is constructed.
@@ -452,11 +454,18 @@ class SafeLinkInterface(Interface):
         zones = deepcopy(storage.get("zone", {}))
         with self._lock:
             first_zone_snapshot = self._zones is None
+            now_metadata_requested = self._now_metadata_pending
+            self._now_metadata_pending = False
             self._storage = storage
             self._zones = zones
             self._last_status_at = time.time()
         if first_zone_snapshot:
             self._heartbeat_requested.set()
+        if now_metadata_requested:
+            self._enqueue_delivery(
+                make_webhook_payload(NOW_METADATA_TYPE, zones),
+                "current status after live event",
+            )
 
     def _on_event(self, event):
         props = event.props
@@ -471,12 +480,33 @@ class SafeLinkInterface(Interface):
             return
 
         payload = make_webhook_payload(IMMEDIATELY_TYPE, props)
+        self._enqueue_delivery(payload, "live event")
+
+        # Live events are transitions, not a complete panel snapshot. Ask
+        # SP4000 for its current status and publish that snapshot separately.
+        if self._is_sp4000_event(props):
+            with self._lock:
+                self._now_metadata_pending = True
+            request_status_refresh = getattr(self.alarm, "request_status_refresh", None)
+            if callable(request_status_refresh):
+                request_status_refresh()
+
+    def _enqueue_delivery(self, payload, description):
         try:
-            self._outbound.put_nowait(Delivery(payload, "live event"))
+            self._outbound.put_nowait(Delivery(payload, description))
         except queue.Full:
             with self._lock:
                 self._dropped_events += 1
-            logger.error("SafeLink live event queue full; event was not delivered")
+            logger.error("SafeLink delivery queue full; %s was not delivered", description)
+
+    def _is_sp4000_event(self, props):
+        """Return whether an event can be confirmed with a panel status read."""
+        panel = getattr(self.alarm, "panel", None)
+        if panel is None:
+            # Keep the callback independently testable before panel discovery.
+            return props.get("type") == "zone"
+        module = type(panel).__module__
+        return "spectra_magellan" in module
 
     def get_zones(self, allow_unavailable: bool = False):
         with self._lock:
